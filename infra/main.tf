@@ -93,3 +93,22 @@ resource "aws_lambda_function_url" "main" {
   authorization_type = "NONE"
   invoke_mode        = "BUFFERED"
 }
+
+# Required: allow public invocation of the Function URL (auth is handled
+# by our Bearer token check inside the handler, not by IAM). The console
+# requires BOTH lambda:InvokeFunction and lambda:InvokeFunctionUrl to be
+# granted to principal "*" for anonymous Function URL access to work.
+resource "aws_lambda_permission" "allow_public_url_invoke" {
+  statement_id           = "FunctionURLAllowPublicAccess"
+  action                 = "lambda:InvokeFunctionUrl"
+  function_name          = aws_lambda_function.main.function_name
+  principal              = "*"
+  function_url_auth_type = "NONE"
+}
+
+resource "aws_lambda_permission" "allow_public_invoke_function" {
+  statement_id  = "FunctionURLAllowPublicInvokeFunction"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.main.function_name
+  principal     = "*"
+}

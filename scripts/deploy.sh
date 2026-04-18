@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Deploy claude-yt-companion to AWS Lambda via Terraform.
 #
+# Prerequisites: terraform, aws (CLI), zip, unzip
+#
 # Usage:
 #   bash scripts/deploy.sh                  # full terraform init + plan + apply
 #   bash scripts/deploy.sh --update-code-only  # re-zip src/ and update Lambda code only
@@ -39,7 +41,7 @@ build_zip() {
   cp "$SRC_DIR/lambda_function.py" "$STAGING/"
 
   # Copy runtime deps from the uv venv (exclude boto3, botocore, dev tools)
-  SITE_PACKAGES=$(python3 -c "import sysconfig; print(sysconfig.get_path('purelib', vars={'base': '$VENV_DIR', 'platbase': '$VENV_DIR'}))" 2>/dev/null \
+  SITE_PACKAGES=$("$VENV_DIR/bin/python" -c "import sysconfig; print(sysconfig.get_path('purelib'))" 2>/dev/null \
     || find "$VENV_DIR" -type d -name "site-packages" | head -1)
 
   if [ -z "$SITE_PACKAGES" ] || [ ! -d "$SITE_PACKAGES" ]; then

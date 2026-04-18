@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(aws sts get-caller-identity)",
+      "Bash(aws lambda get-policy *)",
+      "Bash(aws lambda get-function-url-config *)",
+      "Bash(aws configure list)",
+      "Bash(aws configure get *)",
+      "Bash(aws organizations describe-organization)",
+      "Bash(aws organizations list-policies-for-target *)"
+    ]
+  }
+}
