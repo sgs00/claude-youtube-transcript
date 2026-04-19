@@ -1,7 +1,6 @@
 import json
-import os
 import pytest
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +167,7 @@ class TestMcpInitialize:
         from src.lambda_function import _handle_mcp
         request = {"jsonrpc": "2.0", "method": "initialize", "params": {}, "id": 1}
         response = _handle_mcp(request)
-        assert response["result"]["protocolVersion"] == "2025-03-26"
+        assert response["result"]["protocolVersion"] == "2025-11-25"
 
 
 class TestMcpToolsList:
@@ -262,103 +261,53 @@ class TestMcpUnknownMethod:
 
 
 # ---------------------------------------------------------------------------
-# T4: Auth + Lambda entry point
+# T4: Lambda entry point
 # ---------------------------------------------------------------------------
 
-def _make_event(body, auth_header=None):
-    headers = {"content-type": "application/json"}
-    if auth_header:
-        headers["authorization"] = auth_header
+def _make_event(body, method="POST", path="/"):
     return {
-        "requestContext": {"http": {"method": "POST"}},
-        "headers": headers,
+        "requestContext": {"http": {"method": method, "path": path}},
+        "headers": {"content-type": "application/json"},
         "body": json.dumps(body) if isinstance(body, dict) else body,
     }
 
 
-class TestHandlerAuth:
-    def test_missing_auth_returns_401(self):
+class TestHandlerRouting:
+    def test_post_to_root_returns_200(self):
         from src.lambda_function import handler
         event = _make_event({"jsonrpc": "2.0", "method": "tools/list", "id": 1})
-        # no Authorization header added
-
-        with patch("src.lambda_function._get_bearer_token", return_value="secret"):
-            result = handler(event, {})
-
-        assert result["statusCode"] == 401
-
-    def test_wrong_token_returns_401(self):
-        from src.lambda_function import handler
-        event = _make_event(
-            {"jsonrpc": "2.0", "method": "tools/list", "id": 1},
-            auth_header="Bearer wrongtoken",
-        )
-
-        with patch("src.lambda_function._get_bearer_token", return_value="secret"):
-            result = handler(event, {})
-
-        assert result["statusCode"] == 401
-
-    def test_valid_token_passes(self):
-        from src.lambda_function import handler
-        event = _make_event(
-            {"jsonrpc": "2.0", "method": "tools/list", "id": 1},
-            auth_header="Bearer secret",
-        )
-
-        with patch("src.lambda_function._get_bearer_token", return_value="secret"):
-            result = handler(event, {})
-
+        result = handler(event, {})
         assert result["statusCode"] == 200
+
+    def test_get_to_root_returns_404(self):
+        from src.lambda_function import handler
+        event = _make_event("", method="GET", path="/")
+        result = handler(event, {})
+        assert result["statusCode"] == 404
+
+    def test_get_to_oauth_discovery_returns_404(self):
+        from src.lambda_function import handler
+        event = _make_event("", method="GET", path="/.well-known/oauth-protected-resource")
+        result = handler(event, {})
+        assert result["statusCode"] == 404
 
     def test_malformed_json_returns_400(self):
         from src.lambda_function import handler
         event = _make_event("not-json-at-all")
-        event["headers"]["authorization"] = "Bearer secret"
-
-        with patch("src.lambda_function._get_bearer_token", return_value="secret"):
-            result = handler(event, {})
-
+        result = handler(event, {})
         assert result["statusCode"] == 400
 
 
 class TestHandlerResponse:
     def test_response_has_content_type_json(self):
         from src.lambda_function import handler
-        event = _make_event(
-            {"jsonrpc": "2.0", "method": "tools/list", "id": 1},
-            auth_header="Bearer secret",
-        )
-
-        with patch("src.lambda_function._get_bearer_token", return_value="secret"):
-            result = handler(event, {})
-
+        event = _make_event({"jsonrpc": "2.0", "method": "tools/list", "id": 1})
+        result = handler(event, {})
         assert "application/json" in result["headers"]["Content-Type"]
 
     def test_response_body_is_valid_json(self):
         from src.lambda_function import handler
-        event = _make_event(
-            {"jsonrpc": "2.0", "method": "tools/list", "id": 1},
-            auth_header="Bearer secret",
-        )
-
-        with patch("src.lambda_function._get_bearer_token", return_value="secret"):
-            result = handler(event, {})
-
+        event = _make_event({"jsonrpc": "2.0", "method": "tools/list", "id": 1})
+        result = handler(event, {})
         parsed = json.loads(result["body"])
         assert "result" in parsed
-
-
-class TestGetBearerToken:
-    def test_fetches_from_secrets_manager(self):
-        from src.lambda_function import _get_bearer_token
-
-        mock_client = MagicMock()
-        mock_client.get_secret_value.return_value = {"SecretString": "my-token"}
-
-        with patch("boto3.client", return_value=mock_client), \
-             patch.dict(os.environ, {"SECRET_NAME": "test-secret"}):
-            token = _get_bearer_token()
-
-        assert token == "my-token"
-        mock_client.get_secret_value.assert_called_once_with(SecretId="test-secret")

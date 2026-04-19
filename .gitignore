@@ -7,16 +7,11 @@ __pycache__/
 # uv
 .uv/
 
-# Distribution / build
-dist/*.zip
-dist/tfplan
+# Local config (never commit real values)
+.env
 
-# Terraform
-infra/.terraform/
-infra/.terraform.lock.hcl
-infra/terraform.tfstate
-infra/terraform.tfstate.backup
-infra/tfplan
+# Distribution / build
+dist/
 
 # IDE
 .idea/

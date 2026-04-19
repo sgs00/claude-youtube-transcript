@@ -1,8 +1,8 @@
-# claude-yt-companion
+# claude-youtube-transcript
 
 A remote MCP server that adds YouTube video comprehension to [Claude](https://claude.ai) — something Gemini has natively but Claude doesn't. Paste a YouTube URL in a Claude chat, and Claude fetches the transcript + metadata to reason about the video.
 
-Runs as a single AWS Lambda function exposed via a Function URL. Auth is a bearer token stored in AWS Secrets Manager.
+Runs as a single AWS Lambda function exposed via a Function URL. Auth: OAuth2 (planned; currently open for testing).
 
 See [SPEC.md](SPEC.md) for the full contract and [CLAUDE.md](CLAUDE.md) for implementation notes.
 
@@ -10,9 +10,8 @@ See [SPEC.md](SPEC.md) for the full contract and [CLAUDE.md](CLAUDE.md) for impl
 
 ```
 Claude Web
-  └─ MCP (Streamable HTTP over HTTPS, spec 2025-03-26)
+  └─ MCP (Streamable HTTP over HTTPS)
        └─ Lambda Function URL
-            ├─ Auth: Bearer token from Secrets Manager
             ├─ yt-dlp                  → metadata (title, channel, duration, views, ...)
             └─ youtube-transcript-api  → timestamped transcript
 ```

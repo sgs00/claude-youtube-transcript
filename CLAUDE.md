@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Do NOT include `Co-Authored-By: Claude` or any reference to AI tools in commit messages.
 
-# claude-yt-companion
+# claude-youtube-transcript
 
 AWS Lambda function that extends Claude with YouTube video summarization — a capability natively available in Gemini but missing from Claude. It extracts transcripts and metadata from YouTube videos, exposed via Function URL with Bearer token authentication stored in AWS Secrets Manager.
 
@@ -32,28 +32,23 @@ bash scripts/deploy.sh --update-code-only
 ## Architecture
 
 Single-file Lambda handler at `src/lambda_function.py`. The handler:
-1. Authenticates the request by comparing the `Authorization: Bearer <token>` header against a secret fetched from AWS Secrets Manager (`SECRET_NAME` env var, default: `youtube-transcript/bearer-token`)
-2. Extracts the `url` field from the JSON body
-3. Fetches video metadata via `yt-dlp`
-4. Fetches transcript via `youtube-transcript-api`
-5. Returns combined JSON response
+1. Validates the request method (POST to `/` only)
+2. Dispatches JSON-RPC 2.0 MCP methods: `initialize`, `tools/list`, `tools/call`
+3. For `tools/call get_youtube_transcript`: validates the URL, fetches metadata via `yt-dlp` and transcript via `youtube-transcript-api`
+4. Returns MCP-formatted JSON response
 
-Deployed as a Lambda Function URL (no API Gateway). The deploy script in `scripts/deploy.sh` provisions the IAM role, Secrets Manager secret, Lambda function, and Function URL in one pass.
+Deployed as a Lambda Function URL (no API Gateway). Auth is currently absent (testing phase) — OAuth2 is planned.
 
 ## Environment variables
 
 | Variable | Description | Default |
 |---|---|---|
-| `SECRET_NAME` | Secrets Manager secret name | `youtube-transcript/bearer-token` |
+| `PROXY_URL` | HTTP proxy for YouTube requests | `` (disabled) |
 
-## Request / Response
+## Commands
 
+```bash
+bash scripts/bootstrap.sh       # first-time: creates IAM role, Lambda, Function URL
+bash scripts/deploy.sh          # update code only
+bash scripts/destroy.sh         # tear down all resources
 ```
-POST /
-Authorization: Bearer <token>
-Content-Type: application/json
-
-{ "url": "https://www.youtube.com/watch?v=VIDEO_ID" }
-```
-
-Response includes `video_id`, `url`, `metadata` (title, channel, duration, views, description, thumbnail), and `transcript` (array of `{timestamp, start_seconds, duration_seconds, text}` objects).

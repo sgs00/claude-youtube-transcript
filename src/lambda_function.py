@@ -1,16 +1,23 @@
 import json
+import logging
 import os
 import re
 
-import boto3
 import yt_dlp
 from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api.proxies import GenericProxyConfig
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
 _YOUTUBE_PATTERN = re.compile(
     r"^https?://(www\.|m\.)?youtube\.com/watch\?.*v=|^https?://youtu\.be/"
 )
 
-SECRET_NAME_DEFAULT = "youtube-transcript/bearer-token"
+_PROXY_URL = (os.environ.get("PROXY_URL") or "").rstrip("/") or None
+if _PROXY_URL:
+    os.environ.setdefault("HTTP_PROXY", _PROXY_URL)
+    os.environ.setdefault("HTTPS_PROXY", _PROXY_URL)
 
 
 # ---------------------------------------------------------------------------
@@ -24,6 +31,8 @@ def _validate_youtube_url(url: str) -> None:
 
 def _get_metadata(url: str) -> dict:
     opts = {"quiet": True, "no_warnings": True, "skip_download": True}
+    if _PROXY_URL:
+        opts["proxy"] = _PROXY_URL
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
     return {
@@ -47,7 +56,8 @@ def _seconds_to_timestamp(seconds: float) -> str:
 
 def _get_transcript(video_id: str) -> list:
     languages = ["en", "en-US", "en-GB", "a.en", "de", "fr", "es", "it", "pt", "ja", "ko", "zh"]
-    api = YouTubeTranscriptApi()
+    proxy_config = GenericProxyConfig(_PROXY_URL, _PROXY_URL) if _PROXY_URL else None
+    api = YouTubeTranscriptApi(proxy_config=proxy_config)
     transcript = api.fetch(video_id, languages)
     return [
         {
@@ -93,8 +103,8 @@ def _mcp_initialize(request: dict) -> dict:
         "jsonrpc": "2.0",
         "id": request.get("id"),
         "result": {
-            "protocolVersion": "2025-03-26",
-            "serverInfo": {"name": "claude-yt-companion", "version": "1.0.0"},
+            "protocolVersion": "2025-11-25",
+            "serverInfo": {"name": "claude-youtube-transcript", "version": "1.0.0"},
             "capabilities": {"tools": {}},
         },
     }
@@ -124,8 +134,14 @@ def _mcp_tools_call(request: dict) -> dict:
     except ValueError as exc:
         return _jsonrpc_error(id_, -32602, str(exc))
 
-    metadata = _get_metadata(url)
     video_id = _extract_video_id(url)
+
+    try:
+        metadata = _get_metadata(url)
+    except Exception as exc:
+        logger.warning("Metadata fetch failed (bot detection?): %s", exc)
+        metadata = {}
+
     transcript = _get_transcript(video_id)
 
     payload = {"url": url, "metadata": metadata, "transcript": transcript}
@@ -160,36 +176,20 @@ def _handle_mcp(request: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Auth
-# ---------------------------------------------------------------------------
-
-def _get_bearer_token() -> str:
-    secret_name = os.environ.get("SECRET_NAME", SECRET_NAME_DEFAULT)
-    client = boto3.client("secretsmanager")
-    response = client.get_secret_value(SecretId=secret_name)
-    return response["SecretString"]
-
-
-# ---------------------------------------------------------------------------
 # Lambda entry point
 # ---------------------------------------------------------------------------
 
 def handler(event: dict, context) -> dict:
     headers_raw = event.get("headers") or {}
-    # Lambda Function URL lowercases header names
-    auth_header = headers_raw.get("authorization") or headers_raw.get("Authorization", "")
+    http_method = (event.get("requestContext", {}).get("http", {}).get("method")
+                   or event.get("httpMethod") or "POST")
+    path = (event.get("requestContext", {}).get("http", {}).get("path")
+            or event.get("rawPath") or "/")
+    logger.info("REQ %s %s body=%s", http_method, path, (event.get("body") or "")[:500])
 
-    try:
-        expected_token = _get_bearer_token()
-    except Exception:
-        return _response(500, {"error": "Failed to retrieve auth token"})
-
-    if not auth_header.startswith("Bearer "):
-        return _response(401, {"error": "Missing or malformed Authorization header"})
-
-    provided_token = auth_header[len("Bearer "):]
-    if provided_token != expected_token:
-        return _response(401, {"error": "Invalid token"})
+    # Only handle POST to /; return 404 for OAuth discovery probes and other paths
+    if http_method != "POST" or path != "/":
+        return _response(404, {"error": "Not found"})
 
     body_raw = event.get("body") or ""
     try:

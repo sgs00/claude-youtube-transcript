@@ -1,4 +1,4 @@
-# SPEC.md — claude-yt-companion
+# SPEC.md — claude-youtube-transcript
 
 ## 1. Objective
 
@@ -13,14 +13,14 @@ Extend Claude Web with the ability to read YouTube videos (transcript + metadata
 ```
 Claude Web
   └─ MCP (Streamable HTTP over HTTPS)
-       └─ Lambda Function URL   (eu-south-1, streaming enabled)
-            ├─ Auth: Bearer token from Secrets Manager
+       └─ Lambda Function URL   (eu-south-1, buffered)
+            ├─ Auth: OAuth2 (planned; currently unauthenticated for testing)
             ├─ yt-dlp           → video metadata
             └─ youtube-transcript-api → transcript (all languages)
 ```
 
 ### MCP transport
-Claude Web remote MCP uses the **Streamable HTTP** transport (JSON-RPC 2.0 over HTTPS POST, spec 2025-03-26). For `tools/call`, the response is a single JSON object — Lambda buffered response mode is sufficient, no SSE streaming required for Phase 1. The old HTTP+SSE transport is deprecated since April 2026 and must not be used.
+Claude Web remote MCP uses the **Streamable HTTP** transport (JSON-RPC 2.0 over HTTPS POST, spec 2025-03-26). For `tools/call`, the response is a single JSON object — Lambda buffered response mode is sufficient. The old HTTP+SSE transport is deprecated since April 2026 and must not be used.
 
 ### MCP tools exposed (Phase 1)
 | Tool | Input | Output |
@@ -34,52 +34,102 @@ Phase 2 (out of scope now): optional pre-summarization via Claude API for very l
 ## 3. Project structure
 
 ```
-claude-yt-companion/
+claude-youtube-transcript/
 ├── src/
-│   └── lambda_function.py     # MCP handler + YouTube extraction
-├── infra/
-│   ├── main.tf                # Lambda, IAM role, Secrets Manager, Function URL
-│   ├── variables.tf
-│   ├── outputs.tf
-│   └── backend.tf             # S3 + DynamoDB state backend
+│   └── lambda_function.py       # MCP handler + YouTube extraction
 ├── scripts/
-│   ├── bootstrap-tfstate.sh   # One-time: creates S3 bucket + DynamoDB table for TF state
-│   └── deploy.sh              # Plain AWS CLI deploy (readable fallback)
+│   ├── bootstrap.sh             # One-time: creates IAM role, Lambda, Function URL
+│   ├── deploy.sh                # Updates Lambda code (zip + update-function-code)
+│   └── destroy.sh               # Tears down all AWS resources
 ├── tests/
 │   └── test_lambda_function.py
-├── pyproject.toml             # uv-managed dependencies
-├── SPEC.md                    # This file
-└── CLAUDE.md                  # Claude Code guidance
+├── .env                         # Local config (not versioned)
+├── .env.example                 # Template with example values (versioned)
+├── pyproject.toml               # uv-managed dependencies
+├── SPEC.md                      # This file
+└── CLAUDE.md                    # Claude Code guidance
+```
+
+No Terraform, no CloudFormation, no S3 state backend. Infrastructure is managed exclusively via AWS CLI in the scripts above.
+
+---
+
+## 4. Configuration — .env
+
+All operator-specific values live in `.env` (gitignored). Scripts source it at startup.
+
+`.env.example` (versioned) documents every variable with placeholder values:
+
+```dotenv
+# AWS
+AWS_DEFAULT_REGION=eu-south-1
+
+# Lambda
+FUNCTION_NAME=claude-youtube-transcript
+LAMBDA_ROLE_NAME=claude-youtube-transcript-exec
+
+# Proxy (optional — leave empty to disable)
+PROXY_URL=
 ```
 
 ---
 
-## 4. Infrastructure (Terraform, eu-south-1)
+## 5. Infrastructure scripts (AWS CLI, eu-south-1)
 
-Resources managed by Terraform:
-- `aws_iam_role` + `aws_iam_role_policy` — Lambda execution role; `secretsmanager:GetSecretValue` scoped to the specific secret ARN only (least privilege)
-- `aws_secretsmanager_secret` — stores the Bearer token (value injected outside Terraform, never in state or code)
-- `aws_lambda_function` — Python 3.13, arm64, `timeout = 60` (yt-dlp requires up to 15s for metadata extraction), `reserved_concurrency = 2` (cost protection in case of token leak)
-- `aws_lambda_function_url` — auth type NONE (auth handled at application level via Bearer token); buffered response mode (no streaming required for MCP Phase 1)
+All three scripts must be **idempotent**: re-running them on an already-provisioned environment must succeed without error and without duplicating resources.
 
-Terraform files split into `main.tf`, `variables.tf`, `outputs.tf`, `backend.tf` for replicability.
+### bootstrap.sh
+Creates all AWS resources from scratch. Safe to re-run.
 
-Terraform state: S3 backend with DynamoDB locking. The bootstrap resources (S3 bucket + DynamoDB table) are created by a one-time script (`scripts/bootstrap-tfstate.sh`) before the first `terraform init`. Backend config in `backend.tf`; bucket name and table name are variables so each operator can use their own.
+Steps (in order):
+1. Create IAM role `$LAMBDA_ROLE_NAME` with Lambda trust policy (skip if exists)
+2. Attach `AWSLambdaBasicExecutionRole` managed policy (skip if already attached)
+3. Build the Lambda deployment package (`dist/lambda.zip`)
+4. Create Lambda function (Python 3.13, arm64, timeout 60s, reserved concurrency 2, env var `PROXY_URL`) — skip if exists
+5. Create Function URL (auth NONE, buffered) — skip if exists
+6. Add `lambda:InvokeFunctionUrl` + `lambda:InvokeFunction` resource-based policy for principal `*` (skip if exists)
+7. Print the Function URL
 
-The secret *value* is set via AWS CLI or console after `terraform apply`, never via Terraform.
+### deploy.sh
+Updates Lambda code only. Does not touch IAM or Function URL.
 
-`boto3` is excluded from the deployment package — it is already available in the Lambda managed runtime.
+Steps:
+1. Source `.env`
+2. Build `dist/lambda.zip`
+3. `aws lambda update-function-code` (arm64)
+4. Update environment variables on the function (`PROXY_URL`) in case `.env` changed
+
+### destroy.sh
+Tears down all resources created by `bootstrap.sh`. Safe to re-run (skips missing resources without error).
+
+Steps (reverse order of bootstrap):
+1. Remove resource-based policies (`FunctionURLAllowPublicAccess`, `FunctionURLAllowPublicInvokeFunction`)
+2. Delete Function URL
+3. Delete Lambda function
+4. Detach managed policy from IAM role
+5. Delete IAM role
 
 ---
 
-## 5. MCP protocol
+## 6. AWS resources managed
+
+| Resource | Name | Notes |
+|---|---|---|
+| IAM role | `$LAMBDA_ROLE_NAME` | Lambda execution role |
+| Lambda function | `$FUNCTION_NAME` | Python 3.13, arm64 |
+| Lambda Function URL | — | Auth NONE (OAuth2 planned) |
+
+No S3 buckets, no DynamoDB tables, no API Gateway.
+
+---
+
+## 7. MCP protocol
 
 The Lambda handles MCP lifecycle methods (`initialize`, `tools/list`) and tool calls (`tools/call`).
 
 **Request** (Claude Web → Lambda):
 ```json
 POST <function-url>
-Authorization: Bearer <token>
 Content-Type: application/json
 
 {
@@ -106,16 +156,17 @@ Content-Type: application/json
 
 ---
 
-## 6. Code style
+## 8. Code style
 
 - Python 3.13, managed with `uv` (no virtualenv, no pip directly)
 - Single-file Lambda handler (`src/lambda_function.py`)
 - All config via environment variables; secrets only via Secrets Manager
 - No secrets in code, commits, or logs
+- Shell scripts: `bash`, `set -euo pipefail`, sourcing `.env` at the top
 
 ---
 
-## 7. Testing strategy
+## 9. Testing strategy
 
 - `uv run pytest` for all tests
 - Unit tests mock `boto3`, `yt-dlp`, and `youtube-transcript-api`
@@ -125,13 +176,14 @@ Content-Type: application/json
 
 ---
 
-## 8. Boundaries
+## 10. Boundaries
 
 | Always do | Ask first | Never do |
 |---|---|---|
 | Serverless / Lambda for compute | Adding new AWS services beyond spec | Commit secrets or tokens |
-| Terraform for infra changes | Calling Claude API from Lambda | Use API Gateway |
-| `uv` for Python deps | Supporting playlists | Hard-code region or ARNs |
-| eu-south-1 region | Changing MCP transport | Store transcript data persistently |
-| Validate `url` is a YouTube URL before processing | | Include `boto3` in deployment package |
-| IAM policy scoped to specific secret ARN | | Use SSE/HTTP+SSE MCP transport |
+| AWS CLI scripts for infra changes | Calling Claude API from Lambda | Use Terraform / CloudFormation / SAM |
+| `uv` for Python deps | Supporting playlists | Use API Gateway |
+| eu-south-1 region | Changing MCP transport | Hard-code region, ARNs, or credentials |
+| Validate `url` is a YouTube URL before processing | | Store transcript data persistently |
+| IAM policy scoped to specific secret ARN | | Include `boto3` in deployment package |
+| `.env` for local config, `.env.example` for template | | Use SSE/HTTP+SSE MCP transport |

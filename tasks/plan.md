@@ -1,38 +1,36 @@
-# Plan: claude-yt-companion — full implementation
+# Plan: Remove Terraform, add idempotent AWS CLI scripts
 
 ## Context
 
-Empty repo with a complete SPEC.md. Need to build a remote MCP server (Streamable HTTP, spec 2025-03-26) on AWS Lambda that exposes `get_youtube_transcript`. Greenfield.
+Terraform and its S3/DynamoDB state backend have been destroyed and deleted.
+All AWS resources are gone. Replace `infra/` with three shell scripts driven by `.env`.
 
 ## Dependency graph
 
 ```
-pyproject.toml (uv)
-    └─ youtube extraction (yt-dlp + youtube-transcript-api)
-        └─ MCP JSON-RPC handler (initialize / tools/list / tools/call)
-            └─ auth middleware (Bearer token ↔ Secrets Manager)
-                └─ Lambda handler (lambda_function.handler)
-                    └─ tests
-                        └─ Terraform infra
-                            └─ bootstrap + deploy scripts
+T1: Scaffolding (.env.example, .gitignore, delete infra/ + old scripts)
+ └─ T2: scripts/_lib.sh  (shared build_zip helper)
+      ├─ T3: scripts/bootstrap.sh  (idempotent — create all AWS resources)
+      ├─ T4: scripts/deploy.sh     (rewrite — update code + env vars only)
+      └─ T5: scripts/destroy.sh    (idempotent — tear down all AWS resources)
 ```
 
 ## Critical files
 
 | Path | Role |
 |---|---|
-| `src/lambda_function.py` | Entire application logic |
-| `pyproject.toml` | uv deps |
-| `infra/main.tf` | All AWS resources |
-| `infra/variables.tf` | Configurable values |
-| `infra/backend.tf` | Remote state config |
-| `scripts/bootstrap-tfstate.sh` | One-time state bucket setup |
-| `scripts/deploy.sh` | Deployment |
-| `tests/test_lambda_function.py` | All unit tests |
+| `.env` | Local config (gitignored) |
+| `.env.example` | Versioned template |
+| `scripts/_lib.sh` | Shared build_zip function |
+| `scripts/bootstrap.sh` | One-time infra provisioning |
+| `scripts/deploy.sh` | Code-only update |
+| `scripts/destroy.sh` | Full teardown |
 
 ## Verification
 
-1. `uv run pytest -v` → all tests green
-2. `terraform validate` in `infra/` → no errors
-3. `bash -n scripts/*.sh` → no syntax errors
-4. (post-deploy) `scripts/smoke-test.sh` → 200 for all three MCP methods
+1. `bash -n scripts/*.sh` → no syntax errors
+2. `bootstrap.sh` → exits 0, prints Function URL
+3. `bootstrap.sh` (again) → exits 0, no errors (idempotency)
+4. `deploy.sh` → exits 0, Lambda updated
+5. `destroy.sh` → exits 0, resources gone
+6. `destroy.sh` (again) → exits 0 (idempotency)

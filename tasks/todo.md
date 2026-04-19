@@ -1,10 +1,8 @@
 # TODO
 
-- [ ] T1: Project scaffolding — pyproject.toml, src/__init__.py, uv sync, uv run pytest
-- [ ] T2: YouTube extraction — _validate_youtube_url, _get_metadata, _get_transcript + tests
-- [ ] T3: MCP protocol handler — _handle_mcp, initialize, tools/list, tools/call + tests
-- [ ] T4: Auth + Lambda entry point — _get_bearer_token, handler, error paths + tests
-- [ ] CHECKPOINT 1: uv run pytest -v → all green
-- [ ] T5: Terraform infra — main.tf, variables.tf, outputs.tf, backend.tf + terraform validate
-- [ ] T6: Bootstrap + deploy scripts — bootstrap-tfstate.sh, deploy.sh + bash -n check
-- [ ] CHECKPOINT 2: scripts/smoke-test.sh with curl commands
+- [ ] T1: Scaffolding — delete infra/, delete bootstrap-tfstate.sh, create .env.example, update .gitignore
+- [ ] T2: scripts/_lib.sh — shared build_zip function
+- [ ] T3: scripts/bootstrap.sh — idempotent AWS resource creation (IAM, secret, Lambda, Function URL)
+- [ ] T4: scripts/deploy.sh — rewrite: source .env, build zip, update-function-code + update-function-configuration
+- [ ] T5: scripts/destroy.sh — idempotent teardown in reverse order
+- [ ] CHECKPOINT: bash -n scripts/*.sh; run bootstrap.sh, verify URL, deploy.sh, destroy.sh x2
