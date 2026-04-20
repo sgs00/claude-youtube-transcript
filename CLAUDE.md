@@ -39,7 +39,7 @@ Single-file Lambda handler at `src/lambda_function.py`. The handler:
 2. Routes OAuth2 endpoints: `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`, `/register`, `/authorize`, `/token`
 3. For `POST /`: validates the Bearer token (HMAC-SHA256, signed with secret from Secrets Manager)
 4. Dispatches JSON-RPC 2.0 MCP methods: `initialize`, `tools/list`, `tools/call`
-5. For `tools/call get_youtube_transcript`: validates the URL, fetches metadata via `yt-dlp` and transcript via `youtube-transcript-api`
+5. For `tools/call get_youtube_transcript`: validates the URL, fetches metadata via YouTube oEmbed API and transcript via `youtube-transcript-api` (Webshare residential proxy)
 6. Returns MCP-formatted JSON response
 
 Deployed as a Lambda Function URL (no API Gateway). Auth is OAuth2 Authorization Code + PKCE S256; tokens are stateless HMAC blobs — no database required.
@@ -48,12 +48,7 @@ Deployed as a Lambda Function URL (no API Gateway). Auth is OAuth2 Authorization
 
 | Variable | Description | Default |
 |---|---|---|
-| `PROXY_URL` | HTTP proxy for YouTube requests | `` (disabled) |
-
-## Commands
-
-```bash
-bash scripts/bootstrap.sh       # first-time: creates IAM role, Lambda, Function URL
-bash scripts/deploy.sh          # update code only
-bash scripts/destroy.sh         # tear down all resources
-```
+| `WEBSHARE_USERNAME` | Webshare proxy username | `` (disabled) |
+| `WEBSHARE_PASSWORD` | Webshare proxy password | `` (disabled) |
+| `OAUTH_SECRET_NAME` | Secrets Manager secret name for OAuth signing key | auto-set by scripts |
+| `LAMBDA_MEMORY` | Lambda memory in MB | `256` |

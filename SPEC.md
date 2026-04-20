@@ -16,8 +16,8 @@ Claude Web
        └─ Lambda Function URL   (eu-south-1, buffered)
             ├─ Auth: OAuth2 Authorization Code + PKCE S256
             │    └─ signing secret in AWS Secrets Manager
-            ├─ yt-dlp           → video metadata
-            └─ youtube-transcript-api → transcript (all languages)
+            ├─ YouTube oEmbed API      → metadata (title, channel, thumbnail)
+            └─ youtube-transcript-api  → transcript (all languages, via Webshare proxy)
 ```
 
 ### MCP transport
@@ -73,6 +73,9 @@ LAMBDA_ROLE_NAME=claude-youtube-transcript-exec
 # S3 bucket for deployment zips (auto-computed if empty: <FUNCTION_NAME>-deploy-<account-id>)
 DEPLOY_BUCKET=
 
+# Lambda memory in MB (default: 256)
+LAMBDA_MEMORY=256
+
 # Webshare residential proxy for youtube-transcript-api (leave empty to disable)
 WEBSHARE_USERNAME=
 WEBSHARE_PASSWORD=
@@ -95,7 +98,7 @@ Steps (in order):
 3. Create S3 deploy bucket `$DEPLOY_BUCKET` with public access blocked (skip if exists)
 4. Create Secrets Manager secret `${FUNCTION_NAME}-oauth-secret` with a random 32-byte hex value (skip if exists); attach inline policy to Lambda role granting `secretsmanager:GetSecretValue` on that ARN
 5. Build the Lambda deployment package (`dist/lambda.zip`), upload to S3
-6. Create Lambda function (Python 3.13, arm64, timeout 60s, reserved concurrency 2, env vars `PROXY_URL` + `OAUTH_SECRET_NAME`) — skip if exists
+6. Create Lambda function (Python 3.13, arm64, timeout 60s, reserved concurrency 2, env vars `WEBSHARE_USERNAME`, `WEBSHARE_PASSWORD`, `OAUTH_SECRET_NAME`) — skip if exists
 7. Create Function URL (auth NONE, buffered) — skip if exists
 8. Add `lambda:InvokeFunctionUrl` + `lambda:InvokeFunction` resource-based policy for principal `*` (skip if exists)
 9. Print the Function URL
@@ -108,7 +111,7 @@ Steps:
 2. Build `dist/lambda.zip`
 3. Upload zip to S3 (`aws s3 cp`)
 4. `aws lambda update-function-code --s3-bucket --s3-key` (arm64)
-5. `aws lambda update-function-configuration` — sync `WEBSHARE_USERNAME`, `WEBSHARE_PASSWORD`, `OAUTH_SECRET_NAME`
+5. `aws lambda update-function-configuration` — sync `WEBSHARE_USERNAME`, `WEBSHARE_PASSWORD`, `OAUTH_SECRET_NAME`, `LAMBDA_MEMORY`
 
 ### destroy.sh
 Tears down all resources created by `bootstrap.sh`. Safe to re-run (skips missing resources without error).
@@ -213,7 +216,7 @@ Authorization: Bearer <access-token>
 ## 10. Testing strategy
 
 - `uv run pytest` for all tests
-- Unit tests mock `boto3`, `yt-dlp`, and `youtube-transcript-api`
+- Unit tests mock `boto3`, `urllib.request` (oEmbed), and `youtube-transcript-api`
 - Test MCP protocol conformance: `initialize`, `tools/list`, `tools/call`
 - Test OAuth endpoints: discovery metadata, register, authorize redirect, token exchange
 - Test auth rejection (missing/expired/tampered token)

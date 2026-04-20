@@ -14,8 +14,8 @@ Claude Web
        └─ Lambda Function URL (eu-south-1)
             ├─ OAuth2 Authorization Code + PKCE S256
             │    └─ signing secret in AWS Secrets Manager
-            ├─ yt-dlp                  → metadata (title, channel, duration, views, ...)
-            └─ youtube-transcript-api  → timestamped transcript
+            ├─ YouTube oEmbed API       → metadata (title, channel, thumbnail)
+            └─ youtube-transcript-api  → timestamped transcript (via Webshare proxy)
 ```
 
 The handler is a single file: [`src/lambda_function.py`](src/lambda_function.py).
@@ -78,6 +78,7 @@ All values live in `.env` (gitignored). Copy `.env.example` and fill in:
 | `FUNCTION_NAME` | yes | — | Lambda function name |
 | `LAMBDA_ROLE_NAME` | yes | — | IAM execution role name |
 | `DEPLOY_BUCKET` | no | `<FUNCTION_NAME>-deploy-<account-id>` | S3 bucket for deployment zips |
+| `LAMBDA_MEMORY` | no | `256` | Lambda memory in MB |
 | `WEBSHARE_USERNAME` | no | `` | Webshare residential proxy username |
 | `WEBSHARE_PASSWORD` | no | `` | Webshare residential proxy password |
 
