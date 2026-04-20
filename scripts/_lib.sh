@@ -5,6 +5,7 @@
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$REPO_ROOT/dist"
 ZIP_FILE="$DIST_DIR/lambda.zip"
+S3_KEY="lambda.zip"
 SRC_DIR="$REPO_ROOT/src"
 VENV_DIR="$REPO_ROOT/.venv"
 

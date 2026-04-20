@@ -37,50 +37,41 @@ class TestValidateYouTubeUrl:
 
 
 class TestGetMetadata:
+    def _mock_oembed(self, data: dict):
+        import io
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps(data).encode()
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        return mock_resp
+
     def test_returns_expected_fields(self):
         from src.lambda_function import _get_metadata
 
-        fake_info = {
+        fake_oembed = {
             "title": "Rick Astley - Never Gonna Give You Up",
-            "uploader": "RickAstleyVEVO",
-            "duration": 213,
-            "view_count": 1_500_000_000,
-            "description": "The official video.",
-            "thumbnail": "https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg",
+            "author_name": "RickAstleyVEVO",
+            "thumbnail_url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
         }
 
-        mock_ydl = MagicMock()
-        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
-        mock_ydl.__exit__ = MagicMock(return_value=False)
-        mock_ydl.extract_info.return_value = fake_info
-
-        with patch("yt_dlp.YoutubeDL", return_value=mock_ydl):
+        with patch("urllib.request.urlopen", return_value=self._mock_oembed(fake_oembed)):
             result = _get_metadata("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
 
         assert result["title"] == "Rick Astley - Never Gonna Give You Up"
         assert result["channel"] == "RickAstleyVEVO"
-        assert result["duration"] == 213
-        assert result["views"] == 1_500_000_000
-        assert result["description"] == "The official video."
-        assert result["thumbnail"] == "https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg"
+        assert result["thumbnail"] == "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"
 
-    def test_calls_extract_info_without_download(self):
+    def test_calls_oembed_with_correct_url(self):
         from src.lambda_function import _get_metadata
 
-        mock_ydl = MagicMock()
-        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
-        mock_ydl.__exit__ = MagicMock(return_value=False)
-        mock_ydl.extract_info.return_value = {
-            "title": "t", "uploader": "c", "duration": 0,
-            "view_count": 0, "description": "", "thumbnail": "",
-        }
+        fake_oembed = {"title": "t", "author_name": "c", "thumbnail_url": ""}
 
-        with patch("yt_dlp.YoutubeDL", return_value=mock_ydl):
+        with patch("urllib.request.urlopen", return_value=self._mock_oembed(fake_oembed)) as mock_open:
             _get_metadata("https://www.youtube.com/watch?v=abc")
 
-        mock_ydl.extract_info.assert_called_once_with(
-            "https://www.youtube.com/watch?v=abc", download=False
-        )
+        called_url = mock_open.call_args[0][0]
+        assert "youtube.com/oembed" in called_url
+        assert "watch%3Fv%3Dabc" in called_url or "watch?v=abc" in called_url
 
 
 class TestGetTranscript:

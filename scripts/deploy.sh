@@ -19,7 +19,10 @@ set -o allexport; source "$REPO_ROOT/.env"; set +o allexport
 
 REGION="${AWS_DEFAULT_REGION:-eu-south-1}"
 FUNCTION_NAME="${FUNCTION_NAME:?FUNCTION_NAME not set in .env}"
-PROXY_URL="${PROXY_URL:-}"
+WEBSHARE_USERNAME="${WEBSHARE_USERNAME:-}"
+WEBSHARE_PASSWORD="${WEBSHARE_PASSWORD:-}"
+DEPLOY_BUCKET="${DEPLOY_BUCKET:-${FUNCTION_NAME}-deploy-$(aws sts get-caller-identity --query Account --output text)}"
+SECRET_NAME="${FUNCTION_NAME}-oauth-secret"
 
 # shellcheck source=scripts/_lib.sh
 source "$SCRIPT_DIR/_lib.sh"
@@ -29,10 +32,14 @@ source "$SCRIPT_DIR/_lib.sh"
 # ---------------------------------------------------------------------------
 build_zip
 
+echo "==> Uploading package to s3://$DEPLOY_BUCKET/$S3_KEY"
+aws s3 cp "$ZIP_FILE" "s3://$DEPLOY_BUCKET/$S3_KEY" --region "$REGION"
+
 echo "==> Updating Lambda function code: $FUNCTION_NAME"
 aws lambda update-function-code \
   --function-name "$FUNCTION_NAME" \
-  --zip-file "fileb://$ZIP_FILE" \
+  --s3-bucket "$DEPLOY_BUCKET" \
+  --s3-key "$S3_KEY" \
   --architectures arm64 \
   --region "$REGION" \
   --output text --query 'CodeSize' | xargs -I{} echo "    code size: {} bytes"
@@ -46,7 +53,7 @@ aws lambda wait function-updated \
 echo "==> Updating environment variables"
 aws lambda update-function-configuration \
   --function-name "$FUNCTION_NAME" \
-  --environment "Variables={PROXY_URL=$PROXY_URL}" \
+  --environment "Variables={WEBSHARE_USERNAME=$WEBSHARE_USERNAME,WEBSHARE_PASSWORD=$WEBSHARE_PASSWORD,OAUTH_SECRET_NAME=$SECRET_NAME}" \
   --region "$REGION" \
   --output text --query 'LastModified' | xargs echo "    updated:"
 

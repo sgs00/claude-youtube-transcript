@@ -22,22 +22,27 @@ uv run pytest
 # Run a single test
 uv run pytest tests/test_lambda_function.py::test_name -v
 
-# Deploy (first-time: creates IAM role, secret, function, function URL)
+# First-time setup: creates IAM role, S3 bucket, OAuth secret, Lambda, Function URL
+bash scripts/bootstrap.sh
+
+# Update Lambda code and env vars
 bash scripts/deploy.sh
 
-# Update Lambda code only
-bash scripts/deploy.sh --update-code-only
+# Tear down all AWS resources
+bash scripts/destroy.sh
 ```
 
 ## Architecture
 
 Single-file Lambda handler at `src/lambda_function.py`. The handler:
-1. Validates the request method (POST to `/` only)
-2. Dispatches JSON-RPC 2.0 MCP methods: `initialize`, `tools/list`, `tools/call`
-3. For `tools/call get_youtube_transcript`: validates the URL, fetches metadata via `yt-dlp` and transcript via `youtube-transcript-api`
-4. Returns MCP-formatted JSON response
+1. Decodes base64 body if `isBase64Encoded` (Lambda encodes `application/x-www-form-urlencoded` this way)
+2. Routes OAuth2 endpoints: `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`, `/register`, `/authorize`, `/token`
+3. For `POST /`: validates the Bearer token (HMAC-SHA256, signed with secret from Secrets Manager)
+4. Dispatches JSON-RPC 2.0 MCP methods: `initialize`, `tools/list`, `tools/call`
+5. For `tools/call get_youtube_transcript`: validates the URL, fetches metadata via `yt-dlp` and transcript via `youtube-transcript-api`
+6. Returns MCP-formatted JSON response
 
-Deployed as a Lambda Function URL (no API Gateway). Auth is currently absent (testing phase) — OAuth2 is planned.
+Deployed as a Lambda Function URL (no API Gateway). Auth is OAuth2 Authorization Code + PKCE S256; tokens are stateless HMAC blobs — no database required.
 
 ## Environment variables
 
