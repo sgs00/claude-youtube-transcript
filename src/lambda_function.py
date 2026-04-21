@@ -24,6 +24,7 @@ _WEBSHARE_USERNAME = (os.environ.get("WEBSHARE_USERNAME") or "").strip()
 _WEBSHARE_PASSWORD = (os.environ.get("WEBSHARE_PASSWORD") or "").strip()
 
 _OAUTH_SECRET_NAME = (os.environ.get("OAUTH_SECRET_NAME") or "").strip()
+_TOKEN_TTL_SECONDS = int(os.environ.get("TOKEN_TTL_DAYS") or 30) * 86400
 _oauth_secret: str | None = None
 
 
@@ -212,7 +213,7 @@ def _b64url_decode(s: str) -> bytes:
 
 def _make_code(client_id: str, redirect_uri: str, code_challenge: str) -> str:
     payload = json.dumps(
-        {"c": client_id, "r": redirect_uri, "k": code_challenge, "e": int(time.time()) + 300},
+        {"c": client_id, "r": redirect_uri, "k": code_challenge, "e": int(time.time()) + 600},
         separators=(",", ":"),
     )
     return _b64url((payload + "." + _sign(payload)).encode())
@@ -238,7 +239,7 @@ def _verify_code(code: str, redirect_uri: str, code_verifier: str) -> tuple[str 
 
 
 def _make_token(client_id: str) -> str:
-    payload = json.dumps({"c": client_id, "e": int(time.time()) + 3600}, separators=(",", ":"))
+    payload = json.dumps({"c": client_id, "e": int(time.time()) + _TOKEN_TTL_SECONDS}, separators=(",", ":"))
     return _b64url((payload + "." + _sign(payload)).encode())
 
 

@@ -76,6 +76,9 @@ DEPLOY_BUCKET=
 # Lambda memory in MB (default: 256)
 LAMBDA_MEMORY=256
 
+# Access token TTL in days (default: 30)
+TOKEN_TTL_DAYS=
+
 # Webshare residential proxy for youtube-transcript-api (leave empty to disable)
 WEBSHARE_USERNAME=
 WEBSHARE_PASSWORD=
@@ -158,9 +161,9 @@ The server implements **Authorization Code + PKCE S256** as required by Claude.a
 
 Auth codes and access tokens are HMAC-SHA256 signed blobs — no database required.
 
-- **Auth code**: `base64url(JSON({c, r, k, e}) + "." + HMAC(JSON))` — 5-minute TTL
+- **Auth code**: `base64url(JSON({c, r, k, e}) + "." + HMAC(JSON))` — 10-minute TTL
   - `c` = client_id, `r` = redirect_uri, `k` = PKCE code_challenge, `e` = expiry timestamp
-- **Access token**: same structure with `{c, e}` — 1-hour TTL
+- **Access token**: same structure with `{c, e}` — TTL controlled by `TOKEN_TTL_DAYS` env var (default: 30 days)
 
 The signing key is a 32-byte random hex string stored in Secrets Manager, lazy-loaded and cached per Lambda container.
 

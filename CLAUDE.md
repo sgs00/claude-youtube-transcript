@@ -52,3 +52,4 @@ Deployed as a Lambda Function URL (no API Gateway). Auth is OAuth2 Authorization
 | `WEBSHARE_PASSWORD` | Webshare proxy password | `` (disabled) |
 | `OAUTH_SECRET_NAME` | Secrets Manager secret name for OAuth signing key | auto-set by scripts |
 | `LAMBDA_MEMORY` | Lambda memory in MB | `256` |
+| `TOKEN_TTL_DAYS` | Access token TTL in days | `30` |

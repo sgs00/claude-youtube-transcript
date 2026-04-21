@@ -22,6 +22,7 @@ FUNCTION_NAME="${FUNCTION_NAME:?FUNCTION_NAME not set in .env}"
 WEBSHARE_USERNAME="${WEBSHARE_USERNAME:-}"
 WEBSHARE_PASSWORD="${WEBSHARE_PASSWORD:-}"
 LAMBDA_MEMORY="${LAMBDA_MEMORY:-256}"
+TOKEN_TTL_DAYS="${TOKEN_TTL_DAYS:-30}"
 DEPLOY_BUCKET="${DEPLOY_BUCKET:-${FUNCTION_NAME}-deploy-$(aws sts get-caller-identity --query Account --output text)}"
 SECRET_NAME="${FUNCTION_NAME}-oauth-secret"
 
@@ -55,7 +56,7 @@ echo "==> Updating configuration (memory: ${LAMBDA_MEMORY}MB)"
 aws lambda update-function-configuration \
   --function-name "$FUNCTION_NAME" \
   --memory-size "$LAMBDA_MEMORY" \
-  --environment "Variables={WEBSHARE_USERNAME=$WEBSHARE_USERNAME,WEBSHARE_PASSWORD=$WEBSHARE_PASSWORD,OAUTH_SECRET_NAME=$SECRET_NAME}" \
+  --environment "Variables={WEBSHARE_USERNAME=$WEBSHARE_USERNAME,WEBSHARE_PASSWORD=$WEBSHARE_PASSWORD,OAUTH_SECRET_NAME=$SECRET_NAME,TOKEN_TTL_DAYS=$TOKEN_TTL_DAYS}" \
   --region "$REGION" \
   --output text --query 'LastModified' | xargs echo "    updated:"
 
