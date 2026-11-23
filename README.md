@@ -59,8 +59,13 @@ Syncs the Webshare secret from `.env`, rebuilds the zip, uploads to S3, updates 
 ## Tear down
 
 ```bash
-bash scripts/destroy.sh
+bash scripts/destroy.sh          # asks you to type the function name to confirm
+bash scripts/destroy.sh --yes    # no prompt
 ```
+
+Deletes everything `bootstrap.sh` created: Lambda function and Function URL, the OAuth and Webshare secrets, the IAM role with its policies, and the S3 deploy bucket. The Webshare credentials stay in `.env`.
+
+> **The Claude connector stops working and must be set up again.** A new `bootstrap.sh` creates a new Function URL and a new OAuth signing key, so existing tokens are invalid. In Claude, remove the connector and add it again with the new URL (see [Connect to Claude](#connect-to-claude)).
 
 ## Connect to Claude
 

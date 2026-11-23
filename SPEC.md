@@ -131,12 +131,13 @@ Steps:
 
 ### destroy.sh
 Tears down all resources created by `bootstrap.sh`. Safe to re-run (skips missing resources without error).
+Prints what will be deleted and asks the operator to type the function name to confirm (skip with `--yes`). It must warn that the Claude connector has to be removed and re-added after the next `bootstrap.sh`: the Function URL and the OAuth signing key change, so existing tokens become invalid.
 
 Steps (reverse order of bootstrap):
 1. Remove resource-based policies (`FunctionURLAllowPublicAccess`, `FunctionURLAllowPublicInvokeFunction`)
 2. Delete Function URL
 3. Delete Lambda function
-4. Delete Secrets Manager secrets (`--force-delete-without-recovery`)
+4. Delete Secrets Manager secrets `${FUNCTION_NAME}-oauth-secret` and `${FUNCTION_NAME}-webshare` (`--force-delete-without-recovery`, so a later bootstrap can recreate the same names)
 5. Remove inline IAM policies `SecretsManagerOAuthSecret` and `SecretsManagerWebshareSecret`
 6. Detach managed policy `AWSLambdaBasicExecutionRole` from IAM role
 7. Delete IAM role

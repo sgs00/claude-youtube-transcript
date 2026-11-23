@@ -28,7 +28,8 @@ bash scripts/bootstrap.sh
 # Update Lambda code and env vars
 bash scripts/deploy.sh
 
-# Tear down all AWS resources
+# Tear down all AWS resources (asks for confirmation; --yes skips it).
+# Afterwards the Claude connector must be removed and re-added with the new Function URL.
 bash scripts/destroy.sh
 ```
 
