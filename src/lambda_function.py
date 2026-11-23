@@ -22,6 +22,14 @@ _YOUTUBE_PATTERN = re.compile(
 
 _WEBSHARE_USERNAME = (os.environ.get("WEBSHARE_USERNAME") or "").strip()
 _WEBSHARE_PASSWORD = (os.environ.get("WEBSHARE_PASSWORD") or "").strip()
+if bool(_WEBSHARE_USERNAME) != bool(_WEBSHARE_PASSWORD):
+    logger.warning(
+        "Webshare proxy DISABLED: only one of WEBSHARE_USERNAME / WEBSHARE_PASSWORD is set; both are required"
+    )
+elif not _WEBSHARE_USERNAME:
+    logger.warning(
+        "Webshare proxy disabled: YouTube usually blocks cloud IPs, so transcript fetches may fail (RequestBlocked/IpBlocked)"
+    )
 
 _OAUTH_SECRET_NAME = (os.environ.get("OAUTH_SECRET_NAME") or "").strip()
 _TOKEN_TTL_SECONDS = int(os.environ.get("TOKEN_TTL_DAYS") or 30) * 86400

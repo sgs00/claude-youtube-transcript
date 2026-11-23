@@ -22,6 +22,8 @@ FUNCTION_NAME="${FUNCTION_NAME:?FUNCTION_NAME not set in .env}"
 LAMBDA_ROLE_NAME="${LAMBDA_ROLE_NAME:?LAMBDA_ROLE_NAME not set in .env}"
 WEBSHARE_USERNAME="${WEBSHARE_USERNAME:-}"
 WEBSHARE_PASSWORD="${WEBSHARE_PASSWORD:-}"
+LAMBDA_MEMORY="${LAMBDA_MEMORY:-256}"
+TOKEN_TTL_DAYS="${TOKEN_TTL_DAYS:-30}"
 
 # shellcheck source=scripts/_lib.sh
 source "$SCRIPT_DIR/_lib.sh"
@@ -138,7 +140,8 @@ else
     --s3-bucket "$DEPLOY_BUCKET" \
     --s3-key "$S3_KEY" \
     --timeout 60 \
-    --environment "Variables={WEBSHARE_USERNAME=$WEBSHARE_USERNAME,WEBSHARE_PASSWORD=$WEBSHARE_PASSWORD,OAUTH_SECRET_NAME=$SECRET_NAME}" \
+    --memory-size "$LAMBDA_MEMORY" \
+    --environment "Variables={WEBSHARE_USERNAME=$WEBSHARE_USERNAME,WEBSHARE_PASSWORD=$WEBSHARE_PASSWORD,OAUTH_SECRET_NAME=$SECRET_NAME,TOKEN_TTL_DAYS=$TOKEN_TTL_DAYS}" \
     --region "$REGION" \
     --output text --query 'FunctionArn' | xargs echo "    created:"
   echo "    waiting for function to become Active..."

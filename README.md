@@ -79,8 +79,23 @@ All values live in `.env` (gitignored). Copy `.env.example` and fill in:
 | `LAMBDA_ROLE_NAME` | yes | — | IAM execution role name |
 | `DEPLOY_BUCKET` | no | `<FUNCTION_NAME>-deploy-<account-id>` | S3 bucket for deployment zips |
 | `LAMBDA_MEMORY` | no | `256` | Lambda memory in MB |
-| `WEBSHARE_USERNAME` | no | `` | Webshare residential proxy username |
-| `WEBSHARE_PASSWORD` | no | `` | Webshare residential proxy password |
+| `TOKEN_TTL_DAYS` | no | `30` | OAuth access token lifetime in days |
+| `WEBSHARE_USERNAME` | recommended on AWS | `` | Webshare **Residential** proxy username (see below) |
+| `WEBSHARE_PASSWORD` | recommended on AWS | `` | Webshare **Residential** proxy password (see below) |
+
+### Webshare proxy
+
+YouTube blocks most requests for transcripts that come from cloud-provider IPs (AWS included). Without a proxy, the transcript tool on Lambda typically fails with `RequestBlocked` / `IpBlocked`. `youtube-transcript-api` has built-in support for [Webshare](https://www.webshare.io/) rotating residential proxies.
+
+1. Create a Webshare account and buy a **Residential** plan. The "Proxy Server" (datacenter) and "Static Residential" plans do **not** work: YouTube blocks those IPs too.
+2. In the dashboard, open **Residential → Proxy Settings** and copy **Proxy Username** and **Proxy Password**. These are proxy credentials, *not* your Webshare account login.
+3. Put them in `.env` as `WEBSHARE_USERNAME` / `WEBSHARE_PASSWORD` and run `bash scripts/deploy.sh`.
+
+Notes:
+
+- **Both variables are required.** If either one is empty, the proxy is disabled and a warning is logged at cold start (visible in CloudWatch).
+- Only transcript fetches go through the proxy. Metadata comes from the oEmbed API directly.
+- The credentials are stored as plain Lambda environment variables, readable by anyone with `lambda:GetFunctionConfiguration` on the function.
 
 ## Gotchas
 
