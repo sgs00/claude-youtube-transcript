@@ -138,6 +138,44 @@ class TestGetTranscript:
         assert len(languages_arg) > 1
 
 
+class TestWebshareProxy:
+    def _run(self, secret_name, secret_value=None):
+        from src.lambda_function import _get_transcript
+
+        fake_transcript = MagicMock()
+        fake_transcript.__iter__ = MagicMock(return_value=iter([]))
+        mock_api = MagicMock()
+        mock_api.fetch.return_value = fake_transcript
+
+        with patch("src.lambda_function._WEBSHARE_SECRET_NAME", secret_name), \
+             patch("src.lambda_function._webshare_credentials", None), \
+             patch("src.lambda_function._get_secret_string", return_value=secret_value) as mock_secret, \
+             patch("src.lambda_function.WebshareProxyConfig") as mock_proxy, \
+             patch("src.lambda_function.YouTubeTranscriptApi", return_value=mock_api) as mock_cls:
+            _get_transcript("abc")
+            _get_transcript("abc")
+        return mock_secret, mock_proxy, mock_cls
+
+    def test_no_secret_name_disables_proxy(self):
+        mock_secret, mock_proxy, mock_cls = self._run("")
+        mock_secret.assert_not_called()
+        mock_proxy.assert_not_called()
+        assert mock_cls.call_args.kwargs["proxy_config"] is None
+
+    def test_uses_credentials_from_secret(self):
+        value = json.dumps({"username": "user", "password": "pass"})
+        mock_secret, mock_proxy, mock_cls = self._run("fn-webshare", value)
+        mock_secret.assert_called_once_with("fn-webshare")  # cached across calls
+        mock_proxy.assert_called_with("user", "pass")
+        assert mock_cls.call_args.kwargs["proxy_config"] is mock_proxy.return_value
+
+    def test_incomplete_secret_disables_proxy(self):
+        value = json.dumps({"username": "user", "password": ""})
+        mock_secret, mock_proxy, mock_cls = self._run("fn-webshare", value)
+        mock_proxy.assert_not_called()
+        assert mock_cls.call_args.kwargs["proxy_config"] is None
+
+
 # ---------------------------------------------------------------------------
 # T3: MCP protocol handler
 # ---------------------------------------------------------------------------

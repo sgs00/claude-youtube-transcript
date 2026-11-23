@@ -18,6 +18,7 @@ Claude Web
             │    └─ signing secret in AWS Secrets Manager
             ├─ YouTube oEmbed API      → metadata (title, channel, thumbnail)
             └─ youtube-transcript-api  → transcript (all languages, via Webshare proxy)
+                 └─ proxy credentials in AWS Secrets Manager
 ```
 
 ### MCP transport
@@ -85,12 +86,16 @@ TOKEN_TTL_DAYS=
 # Plan: "Residential" (rotating) — NOT "Proxy Server" or "Static Residential".
 # Credentials: Webshare dashboard → Residential → Proxy Settings → Proxy Username / Password
 # (these are NOT your Webshare account login).
-# Both must be set; if either is empty the proxy is disabled (a warning is logged).
+# Keep them here: they are used only by bootstrap.sh / deploy.sh, which store them
+# in the Secrets Manager secret <FUNCTION_NAME>-webshare (JSON {"username","password"})
+# on every run. They are never passed to the Lambda. Set both or neither.
 WEBSHARE_USERNAME=
 WEBSHARE_PASSWORD=
 ```
 
 `OAUTH_SECRET_NAME` is derived automatically as `${FUNCTION_NAME}-oauth-secret` and is never set in `.env`.
+
+`WEBSHARE_SECRET_NAME` (Lambda env var) is `${FUNCTION_NAME}-webshare` when that secret exists, empty otherwise (proxy disabled). The Webshare credentials never appear in the Lambda configuration.
 
 ---
 
@@ -106,21 +111,23 @@ Steps (in order):
 2. Attach `AWSLambdaBasicExecutionRole` managed policy (skip if already attached)
 3. Create S3 deploy bucket `$DEPLOY_BUCKET` with public access blocked (skip if exists)
 4. Create Secrets Manager secret `${FUNCTION_NAME}-oauth-secret` with a random 32-byte hex value (skip if exists); attach inline policy to Lambda role granting `secretsmanager:GetSecretValue` on that ARN
-5. Build the Lambda deployment package (`dist/lambda.zip`), upload to S3
-6. Create Lambda function (Python 3.13, arm64, timeout 60s, reserved concurrency 2, env vars `WEBSHARE_USERNAME`, `WEBSHARE_PASSWORD`, `OAUTH_SECRET_NAME`) — skip if exists
-7. Create Function URL (auth NONE, buffered) — skip if exists
-8. Add `lambda:InvokeFunctionUrl` + `lambda:InvokeFunction` resource-based policy for principal `*` (skip if exists)
-9. Print the Function URL
+5. Sync the Webshare secret `${FUNCTION_NAME}-webshare` from `WEBSHARE_USERNAME` / `WEBSHARE_PASSWORD` in `.env` (create, or update if changed; error if only one is set). The variables stay in `.env` and are read only by `bootstrap.sh` / `deploy.sh`, never passed to Lambda; if the secret exists, attach inline policy `SecretsManagerWebshareSecret` granting `secretsmanager:GetSecretValue` on its ARN
+6. Build the Lambda deployment package (`dist/lambda.zip`), upload to S3
+7. Create Lambda function (Python 3.13, arm64, timeout 60s, memory `$LAMBDA_MEMORY`, reserved concurrency 2, env vars `WEBSHARE_SECRET_NAME`, `OAUTH_SECRET_NAME`, `TOKEN_TTL_DAYS`) — skip if exists
+8. Create Function URL (auth NONE, buffered) — skip if exists
+9. Add `lambda:InvokeFunctionUrl` + `lambda:InvokeFunction` resource-based policy for principal `*` (skip if exists)
+10. Print the Function URL
 
 ### deploy.sh
-Updates Lambda code and environment variables. Does not touch IAM or Function URL.
+Updates Lambda code, environment variables and the Webshare secret. Does not touch the Function URL.
 
 Steps:
 1. Source `.env`
-2. Build `dist/lambda.zip`
-3. Upload zip to S3 (`aws s3 cp`)
-4. `aws lambda update-function-code --s3-bucket --s3-key` (arm64)
-5. `aws lambda update-function-configuration` — sync `WEBSHARE_USERNAME`, `WEBSHARE_PASSWORD`, `OAUTH_SECRET_NAME`, `LAMBDA_MEMORY`
+2. Sync the Webshare secret (same logic as bootstrap step 5) and put the `SecretsManagerWebshareSecret` inline policy on the function's execution role
+3. Build `dist/lambda.zip`
+4. Upload zip to S3 (`aws s3 cp`)
+5. `aws lambda update-function-code --s3-bucket --s3-key` (arm64)
+6. `aws lambda update-function-configuration` — sync `WEBSHARE_SECRET_NAME`, `OAUTH_SECRET_NAME`, `TOKEN_TTL_DAYS`, `LAMBDA_MEMORY`
 
 ### destroy.sh
 Tears down all resources created by `bootstrap.sh`. Safe to re-run (skips missing resources without error).
@@ -129,8 +136,8 @@ Steps (reverse order of bootstrap):
 1. Remove resource-based policies (`FunctionURLAllowPublicAccess`, `FunctionURLAllowPublicInvokeFunction`)
 2. Delete Function URL
 3. Delete Lambda function
-4. Delete Secrets Manager secret (`--force-delete-without-recovery`)
-5. Remove inline IAM policy `SecretsManagerOAuthSecret`
+4. Delete Secrets Manager secrets (`--force-delete-without-recovery`)
+5. Remove inline IAM policies `SecretsManagerOAuthSecret` and `SecretsManagerWebshareSecret`
 6. Detach managed policy `AWSLambdaBasicExecutionRole` from IAM role
 7. Delete IAM role
 8. Delete S3 deploy bucket (empty first, then delete)
@@ -144,6 +151,7 @@ Steps (reverse order of bootstrap):
 | IAM role | `$LAMBDA_ROLE_NAME` | Lambda execution role |
 | S3 bucket | `$DEPLOY_BUCKET` | Deployment zip storage, public access blocked |
 | Secrets Manager secret | `${FUNCTION_NAME}-oauth-secret` | OAuth HMAC signing key (32 random bytes, hex) |
+| Secrets Manager secret | `${FUNCTION_NAME}-webshare` | Webshare proxy credentials, JSON `{"username","password"}` (optional) |
 | Lambda function | `$FUNCTION_NAME` | Python 3.13, arm64 |
 | Lambda Function URL | — | Auth NONE (OAuth enforced in application code) |
 

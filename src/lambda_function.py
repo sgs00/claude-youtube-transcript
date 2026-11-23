@@ -20,20 +20,22 @@ _YOUTUBE_PATTERN = re.compile(
     r"^https?://(www\.|m\.)?youtube\.com/watch\?.*v=|^https?://youtu\.be/"
 )
 
-_WEBSHARE_USERNAME = (os.environ.get("WEBSHARE_USERNAME") or "").strip()
-_WEBSHARE_PASSWORD = (os.environ.get("WEBSHARE_PASSWORD") or "").strip()
-if bool(_WEBSHARE_USERNAME) != bool(_WEBSHARE_PASSWORD):
+_WEBSHARE_SECRET_NAME = (os.environ.get("WEBSHARE_SECRET_NAME") or "").strip()
+if not _WEBSHARE_SECRET_NAME:
     logger.warning(
-        "Webshare proxy DISABLED: only one of WEBSHARE_USERNAME / WEBSHARE_PASSWORD is set; both are required"
+        "Webshare proxy disabled (WEBSHARE_SECRET_NAME not set): YouTube usually blocks cloud IPs, "
+        "so transcript fetches may fail (RequestBlocked/IpBlocked)"
     )
-elif not _WEBSHARE_USERNAME:
-    logger.warning(
-        "Webshare proxy disabled: YouTube usually blocks cloud IPs, so transcript fetches may fail (RequestBlocked/IpBlocked)"
-    )
+_webshare_credentials: tuple[str, str] | None = None
 
 _OAUTH_SECRET_NAME = (os.environ.get("OAUTH_SECRET_NAME") or "").strip()
 _TOKEN_TTL_SECONDS = int(os.environ.get("TOKEN_TTL_DAYS") or 30) * 86400
 _oauth_secret: str | None = None
+
+
+def _get_secret_string(secret_id: str) -> str:
+    import boto3
+    return boto3.client("secretsmanager").get_secret_value(SecretId=secret_id)["SecretString"]
 
 
 # ---------------------------------------------------------------------------
@@ -66,12 +68,32 @@ def _seconds_to_timestamp(seconds: float) -> str:
     return f"{m}:{s:02d}"
 
 
+def _load_webshare_credentials() -> tuple[str, str] | None:
+    """Return (username, password) from the Webshare secret, or None if the proxy is disabled.
+
+    The secret is a JSON object {"username": ..., "password": ...}, fetched once per container.
+    """
+    global _webshare_credentials
+    if not _WEBSHARE_SECRET_NAME:
+        return None
+    if _webshare_credentials is None:
+        data = json.loads(_get_secret_string(_WEBSHARE_SECRET_NAME))
+        username = (data.get("username") or "").strip()
+        password = (data.get("password") or "").strip()
+        if not (username and password):
+            logger.warning(
+                "Webshare proxy disabled: secret %s is missing 'username' or 'password'",
+                _WEBSHARE_SECRET_NAME,
+            )
+        _webshare_credentials = (username, password)
+    username, password = _webshare_credentials
+    return (username, password) if username and password else None
+
+
 def _get_transcript(video_id: str) -> list:
     languages = ["en", "en-US", "en-GB", "a.en", "de", "fr", "es", "it", "pt", "ja", "ko", "zh"]
-    if _WEBSHARE_USERNAME and _WEBSHARE_PASSWORD:
-        proxy_config = WebshareProxyConfig(_WEBSHARE_USERNAME, _WEBSHARE_PASSWORD)
-    else:
-        proxy_config = None
+    credentials = _load_webshare_credentials()
+    proxy_config = WebshareProxyConfig(*credentials) if credentials else None
     api = YouTubeTranscriptApi(proxy_config=proxy_config)
     transcript = api.fetch(video_id, languages)
     return [
@@ -199,10 +221,7 @@ def _handle_mcp(request: dict) -> dict:
 def _load_oauth_secret() -> str:
     global _oauth_secret
     if _oauth_secret is None:
-        import boto3
-        _oauth_secret = boto3.client("secretsmanager").get_secret_value(
-            SecretId=_OAUTH_SECRET_NAME
-        )["SecretString"]
+        _oauth_secret = _get_secret_string(_OAUTH_SECRET_NAME)
     return _oauth_secret
 
 

@@ -39,7 +39,7 @@ Single-file Lambda handler at `src/lambda_function.py`. The handler:
 2. Routes OAuth2 endpoints: `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`, `/register`, `/authorize`, `/token`
 3. For `POST /`: validates the Bearer token (HMAC-SHA256, signed with secret from Secrets Manager)
 4. Dispatches JSON-RPC 2.0 MCP methods: `initialize`, `tools/list`, `tools/call`
-5. For `tools/call get_youtube_transcript`: validates the URL, fetches metadata via YouTube oEmbed API and transcript via `youtube-transcript-api` (Webshare residential proxy)
+5. For `tools/call get_youtube_transcript`: validates the URL, fetches metadata via YouTube oEmbed API and transcript via `youtube-transcript-api` (Webshare residential proxy, credentials from Secrets Manager)
 6. Returns MCP-formatted JSON response
 
 Deployed as a Lambda Function URL (no API Gateway). Auth is OAuth2 Authorization Code + PKCE S256; tokens are stateless HMAC blobs — no database required.
@@ -48,8 +48,9 @@ Deployed as a Lambda Function URL (no API Gateway). Auth is OAuth2 Authorization
 
 | Variable | Description | Default |
 |---|---|---|
-| `WEBSHARE_USERNAME` | Webshare **Residential** proxy username (dashboard → Residential → Proxy Settings; not the account login). Effectively required on AWS: YouTube blocks cloud IPs | `` (disabled if either is empty) |
-| `WEBSHARE_PASSWORD` | Webshare **Residential** proxy password | `` (disabled if either is empty) |
+| `WEBSHARE_SECRET_NAME` | Secrets Manager secret with Webshare **Residential** proxy credentials, JSON `{"username","password"}`. Effectively required on AWS: YouTube blocks cloud IPs | auto-set by scripts (`<FUNCTION_NAME>-webshare`); empty = proxy disabled |
 | `OAUTH_SECRET_NAME` | Secrets Manager secret name for OAuth signing key | auto-set by scripts |
 | `LAMBDA_MEMORY` | Lambda memory in MB | `256` |
 | `TOKEN_TTL_DAYS` | Access token TTL in days | `30` |
+
+`WEBSHARE_USERNAME` / `WEBSHARE_PASSWORD` live in `.env` (keep them there) and are read only by `bootstrap.sh` / `deploy.sh`, which use them to create or update the `<FUNCTION_NAME>-webshare` secret (`sync_webshare_secret` in `scripts/_lib.sh`). They are never passed to Lambda.

@@ -60,6 +60,27 @@ else
   echo "    not found, skipping"
 fi
 
+WEBSHARE_SECRET_NAME="${FUNCTION_NAME}-webshare"
+echo "==> Deleting Webshare proxy secret: $WEBSHARE_SECRET_NAME"
+if aws secretsmanager describe-secret --secret-id "$WEBSHARE_SECRET_NAME" --region "$REGION" &>/dev/null; then
+  aws secretsmanager delete-secret --secret-id "$WEBSHARE_SECRET_NAME" \
+    --force-delete-without-recovery --region "$REGION" --output text --query Name >/dev/null
+  echo "    deleted"
+else
+  echo "    not found, skipping"
+fi
+
+# Inline policies must be removed before the role can be deleted
+echo "==> Removing inline IAM policies"
+for policy in SecretsManagerOAuthSecret SecretsManagerWebshareSecret; do
+  if aws iam get-role-policy --role-name "$LAMBDA_ROLE_NAME" --policy-name "$policy" &>/dev/null; then
+    aws iam delete-role-policy --role-name "$LAMBDA_ROLE_NAME" --policy-name "$policy"
+    echo "    removed: $policy"
+  else
+    echo "    $policy not found, skipping"
+  fi
+done
+
 BASIC_EXEC="arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 echo "==> Detaching AWSLambdaBasicExecutionRole"
 if aws iam list-attached-role-policies --role-name "$LAMBDA_ROLE_NAME" \

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Update Lambda code and environment variables.
+# Update Lambda code, environment variables and the Webshare proxy secret.
 # Requires the function to already exist (run bootstrap.sh first).
 #
 # Prerequisites: aws CLI, zip, uv (run 'uv sync' first)
@@ -19,15 +19,24 @@ set -o allexport; source "$REPO_ROOT/.env"; set +o allexport
 
 REGION="${AWS_DEFAULT_REGION:-eu-south-1}"
 FUNCTION_NAME="${FUNCTION_NAME:?FUNCTION_NAME not set in .env}"
-WEBSHARE_USERNAME="${WEBSHARE_USERNAME:-}"
-WEBSHARE_PASSWORD="${WEBSHARE_PASSWORD:-}"
 LAMBDA_MEMORY="${LAMBDA_MEMORY:-256}"
 TOKEN_TTL_DAYS="${TOKEN_TTL_DAYS:-30}"
 DEPLOY_BUCKET="${DEPLOY_BUCKET:-${FUNCTION_NAME}-deploy-$(aws sts get-caller-identity --query Account --output text)}"
 SECRET_NAME="${FUNCTION_NAME}-oauth-secret"
+WEBSHARE_SECRET_NAME="${FUNCTION_NAME}-webshare"
 
 # shellcheck source=scripts/_lib.sh
 source "$SCRIPT_DIR/_lib.sh"
+
+# ---------------------------------------------------------------------------
+# Webshare proxy secret (from WEBSHARE_* in .env) + IAM policy
+# ---------------------------------------------------------------------------
+sync_webshare_secret
+ROLE_NAME=$(aws lambda get-function-configuration --function-name "$FUNCTION_NAME" \
+  --region "$REGION" --query Role --output text | sed 's#.*/##')
+grant_webshare_secret_access "$ROLE_NAME"
+WEBSHARE_SECRET_ENV=""
+[ -n "$WEBSHARE_SECRET_ARN" ] && WEBSHARE_SECRET_ENV="$WEBSHARE_SECRET_NAME"
 
 # ---------------------------------------------------------------------------
 # Build + upload code
@@ -56,7 +65,7 @@ echo "==> Updating configuration (memory: ${LAMBDA_MEMORY}MB)"
 aws lambda update-function-configuration \
   --function-name "$FUNCTION_NAME" \
   --memory-size "$LAMBDA_MEMORY" \
-  --environment "Variables={WEBSHARE_USERNAME=$WEBSHARE_USERNAME,WEBSHARE_PASSWORD=$WEBSHARE_PASSWORD,OAUTH_SECRET_NAME=$SECRET_NAME,TOKEN_TTL_DAYS=$TOKEN_TTL_DAYS}" \
+  --environment "Variables={WEBSHARE_SECRET_NAME=$WEBSHARE_SECRET_ENV,OAUTH_SECRET_NAME=$SECRET_NAME,TOKEN_TTL_DAYS=$TOKEN_TTL_DAYS}" \
   --region "$REGION" \
   --output text --query 'LastModified' | xargs echo "    updated:"
 

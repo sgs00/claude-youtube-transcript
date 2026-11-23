@@ -52,3 +52,79 @@ build_zip() {
   (cd "$STAGING" && zip -r9q "$ZIP_FILE" .)
   echo "==> Package built: $ZIP_FILE ($(du -sh "$ZIP_FILE" | cut -f1))"
 }
+
+# Create or update the Webshare proxy secret from WEBSHARE_USERNAME / WEBSHARE_PASSWORD (.env).
+# The secret is a JSON object {"username": ..., "password": ...}.
+# The credentials are meant to stay in .env; they are read only by bootstrap.sh / deploy.sh
+# and never passed to the Lambda. If both are empty, an existing secret is left untouched.
+# Requires: REGION, WEBSHARE_SECRET_NAME. Sets: WEBSHARE_SECRET_ARN (empty if no secret).
+sync_webshare_secret() {
+  local user="${WEBSHARE_USERNAME:-}" pass="${WEBSHARE_PASSWORD:-}"
+  WEBSHARE_SECRET_ARN=""
+
+  echo "==> Webshare proxy secret: $WEBSHARE_SECRET_NAME"
+  if { [ -n "$user" ] && [ -z "$pass" ]; } || { [ -z "$user" ] && [ -n "$pass" ]; }; then
+    echo "ERROR: set both WEBSHARE_USERNAME and WEBSHARE_PASSWORD in .env, or neither." >&2
+    exit 1
+  fi
+
+  local exists=false
+  if aws secretsmanager describe-secret --secret-id "$WEBSHARE_SECRET_NAME" --region "$REGION" &>/dev/null; then
+    exists=true
+  fi
+
+  if [ -n "$user" ]; then
+    local desired current tmp
+    desired=$(WS_USER="$user" WS_PASS="$pass" "$VENV_DIR/bin/python" -c \
+      'import json, os; print(json.dumps({"username": os.environ["WS_USER"], "password": os.environ["WS_PASS"]}))')
+    # Pass the value via a 0600 temp file so it never appears in the process list
+    tmp=$(mktemp)
+    printf '%s' "$desired" > "$tmp"
+    if $exists; then
+      current=$(aws secretsmanager get-secret-value --secret-id "$WEBSHARE_SECRET_NAME" \
+        --region "$REGION" --query SecretString --output text 2>/dev/null || true)
+      if [ "$current" = "$desired" ]; then
+        echo "    up to date"
+      else
+        aws secretsmanager put-secret-value --secret-id "$WEBSHARE_SECRET_NAME" \
+          --secret-string "file://$tmp" --region "$REGION" --output text --query VersionId >/dev/null
+        echo "    updated from .env"
+      fi
+    else
+      aws secretsmanager create-secret --name "$WEBSHARE_SECRET_NAME" \
+        --secret-string "file://$tmp" --region "$REGION" --output text --query ARN >/dev/null
+      echo "    created from .env"
+      exists=true
+    fi
+    rm -f "$tmp"
+  elif $exists; then
+    echo "    WARNING: WEBSHARE_* not set in .env, keeping existing secret unchanged" >&2
+  else
+    echo "    WARNING: no secret and no WEBSHARE_* credentials in .env: proxy disabled," >&2
+    echo "    transcript fetches from AWS will likely be blocked by YouTube." >&2
+  fi
+
+  if $exists; then
+    WEBSHARE_SECRET_ARN=$(aws secretsmanager describe-secret \
+      --secret-id "$WEBSHARE_SECRET_NAME" --region "$REGION" --query ARN --output text)
+  fi
+}
+
+# Grant the Lambda role read access to the Webshare secret (no-op if there is no secret).
+# Usage: grant_webshare_secret_access <role-name>
+grant_webshare_secret_access() {
+  [ -n "${WEBSHARE_SECRET_ARN:-}" ] || return 0
+  echo "==> IAM: grant Lambda read access to Webshare secret"
+  aws iam put-role-policy \
+    --role-name "$1" \
+    --policy-name "SecretsManagerWebshareSecret" \
+    --policy-document "{
+      \"Version\": \"2012-10-17\",
+      \"Statement\": [{
+        \"Effect\": \"Allow\",
+        \"Action\": \"secretsmanager:GetSecretValue\",
+        \"Resource\": \"$WEBSHARE_SECRET_ARN\"
+      }]
+    }"
+  echo "    policy attached"
+}

@@ -20,8 +20,6 @@ set -o allexport; source "$REPO_ROOT/.env"; set +o allexport
 REGION="${AWS_DEFAULT_REGION:-eu-south-1}"
 FUNCTION_NAME="${FUNCTION_NAME:?FUNCTION_NAME not set in .env}"
 LAMBDA_ROLE_NAME="${LAMBDA_ROLE_NAME:?LAMBDA_ROLE_NAME not set in .env}"
-WEBSHARE_USERNAME="${WEBSHARE_USERNAME:-}"
-WEBSHARE_PASSWORD="${WEBSHARE_PASSWORD:-}"
 LAMBDA_MEMORY="${LAMBDA_MEMORY:-256}"
 TOKEN_TTL_DAYS="${TOKEN_TTL_DAYS:-30}"
 
@@ -31,6 +29,7 @@ source "$SCRIPT_DIR/_lib.sh"
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 DEPLOY_BUCKET="${DEPLOY_BUCKET:-${FUNCTION_NAME}-deploy-${ACCOUNT_ID}}"
 SECRET_NAME="${FUNCTION_NAME}-oauth-secret"
+WEBSHARE_SECRET_NAME="${FUNCTION_NAME}-webshare"
 TRUST_POLICY='{
   "Version": "2012-10-17",
   "Statement": [{
@@ -116,7 +115,15 @@ aws iam put-role-policy \
 echo "    policy attached"
 
 # ---------------------------------------------------------------------------
-# 5. Build zip + create Lambda function
+# 5. Webshare proxy secret (from WEBSHARE_* in .env) + IAM policy
+# ---------------------------------------------------------------------------
+sync_webshare_secret
+grant_webshare_secret_access "$LAMBDA_ROLE_NAME"
+WEBSHARE_SECRET_ENV=""
+[ -n "$WEBSHARE_SECRET_ARN" ] && WEBSHARE_SECRET_ENV="$WEBSHARE_SECRET_NAME"
+
+# ---------------------------------------------------------------------------
+# 6. Build zip + create Lambda function
 # ---------------------------------------------------------------------------
 build_zip
 
@@ -141,7 +148,7 @@ else
     --s3-key "$S3_KEY" \
     --timeout 60 \
     --memory-size "$LAMBDA_MEMORY" \
-    --environment "Variables={WEBSHARE_USERNAME=$WEBSHARE_USERNAME,WEBSHARE_PASSWORD=$WEBSHARE_PASSWORD,OAUTH_SECRET_NAME=$SECRET_NAME,TOKEN_TTL_DAYS=$TOKEN_TTL_DAYS}" \
+    --environment "Variables={WEBSHARE_SECRET_NAME=$WEBSHARE_SECRET_ENV,OAUTH_SECRET_NAME=$SECRET_NAME,TOKEN_TTL_DAYS=$TOKEN_TTL_DAYS}" \
     --region "$REGION" \
     --output text --query 'FunctionArn' | xargs echo "    created:"
   echo "    waiting for function to become Active..."
@@ -155,7 +162,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 6. Function URL
+# 7. Function URL
 # ---------------------------------------------------------------------------
 echo "==> Function URL"
 if aws lambda get-function-url-config \
@@ -175,7 +182,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 7. Resource-based policies for public invocation
+# 8. Resource-based policies for public invocation
 # ---------------------------------------------------------------------------
 echo "==> Lambda permissions for public Function URL"
 

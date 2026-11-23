@@ -16,6 +16,7 @@ Claude Web
             │    └─ signing secret in AWS Secrets Manager
             ├─ YouTube oEmbed API       → metadata (title, channel, thumbnail)
             └─ youtube-transcript-api  → timestamped transcript (via Webshare proxy)
+                 └─ proxy credentials in AWS Secrets Manager
 ```
 
 The handler is a single file: [`src/lambda_function.py`](src/lambda_function.py).
@@ -45,7 +46,7 @@ uv run pytest     # run the test suite
 bash scripts/bootstrap.sh
 ```
 
-Creates in order: IAM role, S3 deploy bucket, OAuth signing secret (Secrets Manager), Lambda function, Function URL, resource-based policies.
+Creates in order: IAM role, S3 deploy bucket, OAuth signing secret and Webshare proxy secret (Secrets Manager), Lambda function, Function URL, resource-based policies.
 
 ## Update code
 
@@ -53,7 +54,7 @@ Creates in order: IAM role, S3 deploy bucket, OAuth signing secret (Secrets Mana
 bash scripts/deploy.sh
 ```
 
-Rebuilds the zip, uploads to S3, updates Lambda code and environment variables.
+Syncs the Webshare secret from `.env`, rebuilds the zip, uploads to S3, updates Lambda code and environment variables.
 
 ## Tear down
 
@@ -70,7 +71,12 @@ bash scripts/destroy.sh
 
 ## Configuration
 
-All values live in `.env` (gitignored). Copy `.env.example` and fill in:
+All values live in `.env` (gitignored). Copy `.env.example`, restrict it to your user (it holds the Webshare credentials), and fill in:
+
+```bash
+cp .env.example .env && chmod 600 .env
+```
+
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
@@ -80,8 +86,8 @@ All values live in `.env` (gitignored). Copy `.env.example` and fill in:
 | `DEPLOY_BUCKET` | no | `<FUNCTION_NAME>-deploy-<account-id>` | S3 bucket for deployment zips |
 | `LAMBDA_MEMORY` | no | `256` | Lambda memory in MB |
 | `TOKEN_TTL_DAYS` | no | `30` | OAuth access token lifetime in days |
-| `WEBSHARE_USERNAME` | recommended on AWS | `` | Webshare **Residential** proxy username (see below) |
-| `WEBSHARE_PASSWORD` | recommended on AWS | `` | Webshare **Residential** proxy password (see below) |
+| `WEBSHARE_USERNAME` | recommended on AWS | `` | Webshare **Residential** proxy username, stored in Secrets Manager by the scripts (see below) |
+| `WEBSHARE_PASSWORD` | recommended on AWS | `` | Webshare **Residential** proxy password, stored in Secrets Manager by the scripts (see below) |
 
 ### Webshare proxy
 
@@ -89,13 +95,16 @@ YouTube blocks most requests for transcripts that come from cloud-provider IPs (
 
 1. Create a Webshare account and buy a **Residential** plan. The "Proxy Server" (datacenter) and "Static Residential" plans do **not** work: YouTube blocks those IPs too.
 2. In the dashboard, open **Residential → Proxy Settings** and copy **Proxy Username** and **Proxy Password**. These are proxy credentials, *not* your Webshare account login.
-3. Put them in `.env` as `WEBSHARE_USERNAME` / `WEBSHARE_PASSWORD` and run `bash scripts/deploy.sh`.
+3. Put them in `.env` as `WEBSHARE_USERNAME` / `WEBSHARE_PASSWORD` and run `bash scripts/bootstrap.sh` (first time) or `bash scripts/deploy.sh`.
+
+The scripts store the credentials in the Secrets Manager secret `<FUNCTION_NAME>-webshare` as JSON `{"username": ..., "password": ...}` and grant the Lambda role read access to it. The Lambda only receives the secret name (`WEBSHARE_SECRET_NAME`). It reads the secret on the first transcript request and caches it per container.
 
 Notes:
 
-- **Both variables are required.** If either one is empty, the proxy is disabled and a warning is logged at cold start (visible in CloudWatch).
+- **Set both variables or neither.** The scripts stop with an error if only one is set.
+- **Keep the credentials in `.env`.** They are read only by `bootstrap.sh` and `deploy.sh`, which write them to the secret on every run, and are never passed to the Lambda. To rotate, change the values in `.env` and run `deploy.sh` again.
+- If there is no secret, the proxy is disabled and a warning is logged at cold start (visible in CloudWatch). The same happens if the secret is missing `username` or `password`.
 - Only transcript fetches go through the proxy. Metadata comes from the oEmbed API directly.
-- The credentials are stored as plain Lambda environment variables, readable by anyone with `lambda:GetFunctionConfiguration` on the function.
 
 ## Gotchas
 
@@ -103,6 +112,7 @@ Notes:
 - **`boto3` is not a deployment dependency**: it ships with the Lambda runtime. It's dev-only so tests can mock it.
 - **Lambda base64-encodes `application/x-www-form-urlencoded` bodies**: the OAuth `/token` endpoint decodes them automatically via `isBase64Encoded`.
 - **OAuth tokens are stateless**: signed with HMAC-SHA256 using a secret in Secrets Manager. No database required.
+- **Secrets are cached per Lambda container**: after rotating the Webshare credentials, `deploy.sh` updates the function configuration, which forces fresh containers. If you change the secret by hand instead, warm containers keep the old value until they are recycled.
 
 ## License
 
