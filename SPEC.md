@@ -81,7 +81,9 @@ LAMBDA_MEMORY=256
 # so you only need to reconnect if the refresh token expires (or the OAuth secret changes).
 # Access token TTL in hours (default: 4)
 ACCESS_TOKEN_TTL_HOURS=
-# Refresh token TTL in days (default: 365); a new one is issued on every renewal
+# Refresh token TTL in days (default: 30); a new one is issued on every renewal, so you
+# only reconnect after this many days without using the connector. Already-issued refresh
+# tokens are not revoked by renewal: each stays valid until its own expiry.
 REFRESH_TOKEN_TTL_DAYS=
 
 # Webshare *Residential* proxy for youtube-transcript-api.
@@ -183,7 +185,7 @@ Auth codes and access tokens are HMAC-SHA256 signed blobs — no database requir
 - **Auth code**: `base64url(JSON({c, r, k, e}) + "." + HMAC(JSON))` — 10-minute TTL
   - `c` = client_id, `r` = redirect_uri, `k` = PKCE code_challenge, `e` = expiry timestamp
 - **Access token**: same structure with `{c, e, t: "a"}` — TTL controlled by `ACCESS_TOKEN_TTL_HOURS` (default: 4 h); `expires_in` in the token response matches it. Tokens without `t` (issued before refresh support) are accepted as access tokens.
-- **Refresh token**: same structure with `{c, e, t: "r"}` — TTL controlled by `REFRESH_TOKEN_TTL_DAYS` (default: 365). `POST /token` with `grant_type=refresh_token` returns a new access token **and** a new refresh token (rotation). Invalid, expired or wrong-type tokens get `400 invalid_grant`. Being stateless, an old refresh token is not revoked: it stays valid until its own expiry.
+- **Refresh token**: same structure with `{c, e, t: "r"}` — TTL controlled by `REFRESH_TOKEN_TTL_DAYS` (default: 30). `POST /token` with `grant_type=refresh_token` returns a new access token **and** a new refresh token (rotation). Invalid, expired or wrong-type tokens get `400 invalid_grant`. Being stateless, an old refresh token is not revoked: it stays valid until its own expiry, which is why the default TTL is short. The only way to revoke all tokens at once is to rotate the OAuth secret (the connector must then be reconnected).
 - Metadata advertises `grant_types_supported: ["authorization_code", "refresh_token"]` and `scopes_supported: ["offline_access"]`. Per Claude's connector docs, Claude refreshes proactively up to 5 minutes before `expires_in` and reactively on `401`.
 - `/token` request bodies are never logged (only `grant_type`).
 

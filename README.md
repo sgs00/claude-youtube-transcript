@@ -91,7 +91,7 @@ cp .env.example .env && chmod 600 .env
 | `DEPLOY_BUCKET` | no | `<FUNCTION_NAME>-deploy-<account-id>` | S3 bucket for deployment zips |
 | `LAMBDA_MEMORY` | no | `256` | Lambda memory in MB |
 | `ACCESS_TOKEN_TTL_HOURS` | no | `4` | OAuth access token lifetime in hours; Claude refreshes it automatically |
-| `REFRESH_TOKEN_TTL_DAYS` | no | `365` | OAuth refresh token lifetime in days; a new one is issued on every renewal |
+| `REFRESH_TOKEN_TTL_DAYS` | no | `30` | OAuth refresh token lifetime in days; a new one is issued on every renewal, so you only reconnect after this many days of inactivity |
 | `WEBSHARE_USERNAME` | recommended on AWS | `` | Webshare **Residential** proxy username, stored in Secrets Manager by the scripts (see below) |
 | `WEBSHARE_PASSWORD` | recommended on AWS | `` | Webshare **Residential** proxy password, stored in Secrets Manager by the scripts (see below) |
 

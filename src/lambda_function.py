@@ -30,7 +30,7 @@ _webshare_credentials: tuple[str, str] | None = None
 
 _OAUTH_SECRET_NAME = (os.environ.get("OAUTH_SECRET_NAME") or "").strip()
 _ACCESS_TOKEN_TTL_SECONDS = int(os.environ.get("ACCESS_TOKEN_TTL_HOURS") or 4) * 3600
-_REFRESH_TOKEN_TTL_SECONDS = int(os.environ.get("REFRESH_TOKEN_TTL_DAYS") or 365) * 86400
+_REFRESH_TOKEN_TTL_SECONDS = int(os.environ.get("REFRESH_TOKEN_TTL_DAYS") or 30) * 86400
 _oauth_secret: str | None = None
 
 
