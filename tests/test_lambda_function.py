@@ -340,3 +340,118 @@ class TestHandlerResponse:
         result = handler(event, {})
         parsed = json.loads(result["body"])
         assert "result" in parsed
+
+
+# ---------------------------------------------------------------------------
+# T5: OAuth token endpoint (authorization_code + refresh_token)
+# ---------------------------------------------------------------------------
+
+import base64
+import hashlib
+import urllib.parse
+
+
+@pytest.fixture
+def oauth():
+    with patch("src.lambda_function._OAUTH_SECRET_NAME", "test-secret"), \
+         patch("src.lambda_function._oauth_secret", "k" * 64):
+        yield
+
+
+def _token_request(params: dict) -> dict:
+    from src.lambda_function import handler
+    event = {
+        "requestContext": {"http": {"method": "POST", "path": "/token"}},
+        "headers": {"content-type": "application/x-www-form-urlencoded", "host": "example.test"},
+        "body": urllib.parse.urlencode(params),
+    }
+    result = handler(event, {})
+    return result["statusCode"], json.loads(result["body"])
+
+
+def _auth_code(verifier: str = "v" * 43) -> str:
+    from src.lambda_function import _make_code
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
+    return _make_code("claude-ai", "https://claude.ai/cb", challenge)
+
+
+def _exchange_code() -> dict:
+    status, body = _token_request({
+        "grant_type": "authorization_code", "code": _auth_code(),
+        "redirect_uri": "https://claude.ai/cb", "code_verifier": "v" * 43,
+    })
+    assert status == 200
+    return body
+
+
+class TestOAuthTokens:
+    def test_code_exchange_returns_access_and_refresh_token(self, oauth):
+        from src.lambda_function import _ACCESS_TOKEN_TTL_SECONDS, _verify_token
+        body = _exchange_code()
+        assert body["token_type"] == "Bearer"
+        assert body["expires_in"] == _ACCESS_TOKEN_TTL_SECONDS
+        assert _verify_token(body["access_token"])
+        assert body["refresh_token"]
+
+    def test_refresh_returns_new_tokens(self, oauth):
+        from src.lambda_function import _verify_token
+        first = _exchange_code()
+        status, body = _token_request({"grant_type": "refresh_token", "refresh_token": first["refresh_token"]})
+        assert status == 200
+        assert _verify_token(body["access_token"])
+        assert body["refresh_token"]
+
+    def test_refresh_token_is_not_an_access_token(self, oauth):
+        from src.lambda_function import _verify_token
+        body = _exchange_code()
+        assert not _verify_token(body["refresh_token"])
+
+    def test_access_token_cannot_be_used_to_refresh(self, oauth):
+        body = _exchange_code()
+        status, err = _token_request({"grant_type": "refresh_token", "refresh_token": body["access_token"]})
+        assert status == 400 and err["error"] == "invalid_grant"
+
+    def test_tampered_refresh_token_rejected(self, oauth):
+        status, err = _token_request({"grant_type": "refresh_token", "refresh_token": "garbage"})
+        assert status == 400 and err["error"] == "invalid_grant"
+
+    def test_expired_refresh_token_rejected(self, oauth):
+        body = _exchange_code()
+        with patch("src.lambda_function.time.time", return_value=10**12):
+            status, err = _token_request({"grant_type": "refresh_token", "refresh_token": body["refresh_token"]})
+        assert status == 400 and err["error"] == "invalid_grant"
+
+    def test_refresh_with_wrong_client_id_rejected(self, oauth):
+        body = _exchange_code()
+        status, err = _token_request({
+            "grant_type": "refresh_token", "refresh_token": body["refresh_token"], "client_id": "other",
+        })
+        assert status == 400 and err["error"] == "invalid_grant"
+
+    def test_legacy_access_token_without_type_still_valid(self, oauth):
+        import time as _time
+        from src.lambda_function import _sign, _b64url, _verify_token
+        payload = json.dumps({"c": "claude-ai", "e": int(_time.time()) + 60}, separators=(",", ":"))
+        assert _verify_token(_b64url((payload + "." + _sign(payload)).encode()))
+
+    def test_unsupported_grant_type(self, oauth):
+        status, err = _token_request({"grant_type": "password"})
+        assert status == 400 and err["error"] == "unsupported_grant_type"
+
+    def test_metadata_advertises_refresh(self, oauth):
+        from src.lambda_function import handler
+        event = {
+            "requestContext": {"http": {"method": "GET", "path": "/.well-known/oauth-authorization-server"}},
+            "headers": {"host": "example.test"},
+        }
+        meta = json.loads(handler(event, {})["body"])
+        assert "refresh_token" in meta["grant_types_supported"]
+        assert "offline_access" in meta["scopes_supported"]
+
+    def test_token_body_is_not_logged(self, oauth, caplog):
+        import logging
+        body = _exchange_code()
+        with caplog.at_level(logging.INFO):
+            _token_request({"grant_type": "refresh_token", "refresh_token": body["refresh_token"]})
+        assert body["refresh_token"] not in caplog.text
+        assert "grant_type=refresh_token" in caplog.text

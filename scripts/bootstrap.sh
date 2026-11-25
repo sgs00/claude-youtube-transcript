@@ -21,7 +21,8 @@ REGION="${AWS_DEFAULT_REGION:-eu-south-1}"
 FUNCTION_NAME="${FUNCTION_NAME:?FUNCTION_NAME not set in .env}"
 LAMBDA_ROLE_NAME="${LAMBDA_ROLE_NAME:?LAMBDA_ROLE_NAME not set in .env}"
 LAMBDA_MEMORY="${LAMBDA_MEMORY:-256}"
-TOKEN_TTL_DAYS="${TOKEN_TTL_DAYS:-30}"
+ACCESS_TOKEN_TTL_HOURS="${ACCESS_TOKEN_TTL_HOURS:-720}"
+REFRESH_TOKEN_TTL_DAYS="${REFRESH_TOKEN_TTL_DAYS:-365}"
 
 # shellcheck source=scripts/_lib.sh
 source "$SCRIPT_DIR/_lib.sh"
@@ -148,7 +149,7 @@ else
     --s3-key "$S3_KEY" \
     --timeout 60 \
     --memory-size "$LAMBDA_MEMORY" \
-    --environment "Variables={WEBSHARE_SECRET_NAME=$WEBSHARE_SECRET_ENV,OAUTH_SECRET_NAME=$SECRET_NAME,TOKEN_TTL_DAYS=$TOKEN_TTL_DAYS}" \
+    --environment "Variables={WEBSHARE_SECRET_NAME=$WEBSHARE_SECRET_ENV,OAUTH_SECRET_NAME=$SECRET_NAME,ACCESS_TOKEN_TTL_HOURS=$ACCESS_TOKEN_TTL_HOURS,REFRESH_TOKEN_TTL_DAYS=$REFRESH_TOKEN_TTL_DAYS}" \
     --region "$REGION" \
     --output text --query 'FunctionArn' | xargs echo "    created:"
   echo "    waiting for function to become Active..."

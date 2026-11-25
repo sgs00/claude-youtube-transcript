@@ -77,8 +77,12 @@ DEPLOY_BUCKET=
 # Lambda memory in MB (default: 256)
 LAMBDA_MEMORY=256
 
-# Access token TTL in days (default: 30)
-TOKEN_TTL_DAYS=
+# OAuth token lifetimes. Claude renews the access token with the refresh token,
+# so you only need to reconnect if the refresh token expires (or the OAuth secret changes).
+# Access token TTL in hours (default: 720 = 30 days)
+ACCESS_TOKEN_TTL_HOURS=
+# Refresh token TTL in days (default: 365); a new one is issued on every renewal
+REFRESH_TOKEN_TTL_DAYS=
 
 # Webshare *Residential* proxy for youtube-transcript-api.
 # Strongly recommended on AWS: YouTube blocks most cloud IPs, so without it
@@ -113,7 +117,7 @@ Steps (in order):
 4. Create Secrets Manager secret `${FUNCTION_NAME}-oauth-secret` with a random 32-byte hex value (skip if exists); attach inline policy to Lambda role granting `secretsmanager:GetSecretValue` on that ARN
 5. Sync the Webshare secret `${FUNCTION_NAME}-webshare` from `WEBSHARE_USERNAME` / `WEBSHARE_PASSWORD` in `.env` (create, or update if changed; error if only one is set). The variables stay in `.env` and are read only by `bootstrap.sh` / `deploy.sh`, never passed to Lambda; if the secret exists, attach inline policy `SecretsManagerWebshareSecret` granting `secretsmanager:GetSecretValue` on its ARN
 6. Build the Lambda deployment package (`dist/lambda.zip`), upload to S3
-7. Create Lambda function (Python 3.13, arm64, timeout 60s, memory `$LAMBDA_MEMORY`, reserved concurrency 2, env vars `WEBSHARE_SECRET_NAME`, `OAUTH_SECRET_NAME`, `TOKEN_TTL_DAYS`) — skip if exists
+7. Create Lambda function (Python 3.13, arm64, timeout 60s, memory `$LAMBDA_MEMORY`, reserved concurrency 2, env vars `WEBSHARE_SECRET_NAME`, `OAUTH_SECRET_NAME`, `ACCESS_TOKEN_TTL_HOURS`, `REFRESH_TOKEN_TTL_DAYS`) — skip if exists
 8. Create Function URL (auth NONE, buffered) — skip if exists
 9. Add `lambda:InvokeFunctionUrl` + `lambda:InvokeFunction` resource-based policy for principal `*` (skip if exists)
 10. Print the Function URL
@@ -127,7 +131,7 @@ Steps:
 3. Build `dist/lambda.zip`
 4. Upload zip to S3 (`aws s3 cp`)
 5. `aws lambda update-function-code --s3-bucket --s3-key` (arm64)
-6. `aws lambda update-function-configuration` — sync `WEBSHARE_SECRET_NAME`, `OAUTH_SECRET_NAME`, `TOKEN_TTL_DAYS`, `LAMBDA_MEMORY`
+6. `aws lambda update-function-configuration` — sync `WEBSHARE_SECRET_NAME`, `OAUTH_SECRET_NAME`, `ACCESS_TOKEN_TTL_HOURS`, `REFRESH_TOKEN_TTL_DAYS`, `LAMBDA_MEMORY`
 
 ### destroy.sh
 Tears down all resources created by `bootstrap.sh`. Safe to re-run (skips missing resources without error).
@@ -178,7 +182,10 @@ Auth codes and access tokens are HMAC-SHA256 signed blobs — no database requir
 
 - **Auth code**: `base64url(JSON({c, r, k, e}) + "." + HMAC(JSON))` — 10-minute TTL
   - `c` = client_id, `r` = redirect_uri, `k` = PKCE code_challenge, `e` = expiry timestamp
-- **Access token**: same structure with `{c, e}` — TTL controlled by `TOKEN_TTL_DAYS` env var (default: 30 days)
+- **Access token**: same structure with `{c, e, t: "a"}` — TTL controlled by `ACCESS_TOKEN_TTL_HOURS` (default: 720 h = 30 days); `expires_in` in the token response matches it. Tokens without `t` (issued before refresh support) are accepted as access tokens.
+- **Refresh token**: same structure with `{c, e, t: "r"}` — TTL controlled by `REFRESH_TOKEN_TTL_DAYS` (default: 365). `POST /token` with `grant_type=refresh_token` returns a new access token **and** a new refresh token (rotation). Invalid, expired or wrong-type tokens get `400 invalid_grant`. Being stateless, an old refresh token is not revoked: it stays valid until its own expiry.
+- Metadata advertises `grant_types_supported: ["authorization_code", "refresh_token"]` and `scopes_supported: ["offline_access"]`. Per Claude's connector docs, Claude refreshes proactively up to 5 minutes before `expires_in` and reactively on `401`.
+- `/token` request bodies are never logged (only `grant_type`).
 
 The signing key is a 32-byte random hex string stored in Secrets Manager, lazy-loaded and cached per Lambda container.
 

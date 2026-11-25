@@ -90,7 +90,8 @@ cp .env.example .env && chmod 600 .env
 | `LAMBDA_ROLE_NAME` | yes | — | IAM execution role name |
 | `DEPLOY_BUCKET` | no | `<FUNCTION_NAME>-deploy-<account-id>` | S3 bucket for deployment zips |
 | `LAMBDA_MEMORY` | no | `256` | Lambda memory in MB |
-| `TOKEN_TTL_DAYS` | no | `30` | OAuth access token lifetime in days |
+| `ACCESS_TOKEN_TTL_HOURS` | no | `720` | OAuth access token lifetime in hours (30 days) |
+| `REFRESH_TOKEN_TTL_DAYS` | no | `365` | OAuth refresh token lifetime in days; a new one is issued on every renewal |
 | `WEBSHARE_USERNAME` | recommended on AWS | `` | Webshare **Residential** proxy username, stored in Secrets Manager by the scripts (see below) |
 | `WEBSHARE_PASSWORD` | recommended on AWS | `` | Webshare **Residential** proxy password, stored in Secrets Manager by the scripts (see below) |
 
@@ -116,7 +117,7 @@ Notes:
 - **Public Function URL requires two resource-policy statements**: both `lambda:InvokeFunction` and `lambda:InvokeFunctionUrl` must be granted to principal `*`. Missing the first yields a generic 403 with no CloudWatch trace.
 - **`boto3` is not a deployment dependency**: it ships with the Lambda runtime. It's dev-only so tests can mock it.
 - **Lambda base64-encodes `application/x-www-form-urlencoded` bodies**: the OAuth `/token` endpoint decodes them automatically via `isBase64Encoded`.
-- **OAuth tokens are stateless**: signed with HMAC-SHA256 using a secret in Secrets Manager. No database required.
+- **OAuth tokens are stateless**: signed with HMAC-SHA256 using a secret in Secrets Manager. No database required. Claude renews the access token with the refresh token, so you only reconnect if the refresh token expires or the OAuth secret changes. The flip side of statelessness: tokens can't be revoked individually, only all at once by rotating the OAuth secret.
 - **Secrets are cached per Lambda container**: after rotating the Webshare credentials, `deploy.sh` updates the function configuration, which forces fresh containers. If you change the secret by hand instead, warm containers keep the old value until they are recycled.
 
 ## License

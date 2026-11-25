@@ -29,7 +29,8 @@ if not _WEBSHARE_SECRET_NAME:
 _webshare_credentials: tuple[str, str] | None = None
 
 _OAUTH_SECRET_NAME = (os.environ.get("OAUTH_SECRET_NAME") or "").strip()
-_TOKEN_TTL_SECONDS = int(os.environ.get("TOKEN_TTL_DAYS") or 30) * 86400
+_ACCESS_TOKEN_TTL_SECONDS = int(os.environ.get("ACCESS_TOKEN_TTL_HOURS") or 720) * 3600
+_REFRESH_TOKEN_TTL_SECONDS = int(os.environ.get("REFRESH_TOKEN_TTL_DAYS") or 365) * 86400
 _oauth_secret: str | None = None
 
 
@@ -265,20 +266,45 @@ def _verify_code(code: str, redirect_uri: str, code_verifier: str) -> tuple[str 
         return None, "invalid_grant"
 
 
-def _make_token(client_id: str) -> str:
-    payload = json.dumps({"c": client_id, "e": int(time.time()) + _TOKEN_TTL_SECONDS}, separators=(",", ":"))
+# Token payload: c = client_id, e = expiry (unix time), t = type ("a" access, "r" refresh).
+# Tokens issued before refresh support have no "t" and are treated as access tokens.
+
+def _make_token(client_id: str, token_type: str = "a") -> str:
+    ttl = _REFRESH_TOKEN_TTL_SECONDS if token_type == "r" else _ACCESS_TOKEN_TTL_SECONDS
+    payload = json.dumps(
+        {"c": client_id, "e": int(time.time()) + ttl, "t": token_type}, separators=(",", ":")
+    )
     return _b64url((payload + "." + _sign(payload)).encode())
 
 
-def _verify_token(token: str) -> bool:
+def _decode_token(token: str, token_type: str) -> dict | None:
+    """Return the payload if the token is authentic, unexpired and of the given type."""
     try:
         raw = _b64url_decode(token).decode()
         payload_str, sig = raw.rsplit(".", 1)
         if not hmac.compare_digest(sig, _sign(payload_str)):
-            return False
-        return int(time.time()) <= json.loads(payload_str)["e"]
+            return None
+        p = json.loads(payload_str)
+        if p.get("t", "a") != token_type or int(time.time()) > p["e"]:
+            return None
+        return p
     except Exception:
-        return False
+        return None
+
+
+def _verify_token(token: str) -> bool:
+    return _decode_token(token, "a") is not None
+
+
+def _token_response(client_id: str) -> dict:
+    # A new refresh token is issued on every exchange (rotation). Tokens are stateless,
+    # so a previous refresh token stays valid until its own expiry.
+    return _response(200, {
+        "access_token": _make_token(client_id, "a"),
+        "token_type": "Bearer",
+        "expires_in": _ACCESS_TOKEN_TTL_SECONDS,
+        "refresh_token": _make_token(client_id, "r"),
+    })
 
 
 def _oauth_protected_resource(base_url: str) -> dict:
@@ -292,7 +318,8 @@ def _oauth_authorization_server(base_url: str) -> dict:
         "token_endpoint": f"{base_url}/token",
         "registration_endpoint": f"{base_url}/register",
         "response_types_supported": ["code"],
-        "grant_types_supported": ["authorization_code"],
+        "grant_types_supported": ["authorization_code", "refresh_token"],
+        "scopes_supported": ["offline_access"],
         "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": ["none"],
     })
@@ -306,7 +333,7 @@ def _oauth_register(event: dict) -> dict:
     return _response(201, {
         "client_id": "claude-ai",
         "redirect_uris": body.get("redirect_uris", []),
-        "grant_types": ["authorization_code"],
+        "grant_types": ["authorization_code", "refresh_token"],
         "response_types": ["code"],
         "token_endpoint_auth_method": "none",
     })
@@ -337,20 +364,22 @@ def _oauth_token(event: dict) -> dict:
             params = json.loads(body_raw)
         except (json.JSONDecodeError, TypeError):
             params = {}
-    if params.get("grant_type") != "authorization_code":
-        return _response(400, {"error": "unsupported_grant_type"})
-    client_id, err = _verify_code(
-        params.get("code", ""),
-        params.get("redirect_uri", ""),
-        params.get("code_verifier", ""),
-    )
-    if err:
-        return _response(400, {"error": err})
-    return _response(200, {
-        "access_token": _make_token(client_id),
-        "token_type": "Bearer",
-        "expires_in": 3600,
-    })
+    grant_type = params.get("grant_type")
+    if grant_type == "authorization_code":
+        client_id, err = _verify_code(
+            params.get("code", ""),
+            params.get("redirect_uri", ""),
+            params.get("code_verifier", ""),
+        )
+        if err:
+            return _response(400, {"error": err})
+        return _token_response(client_id)
+    if grant_type == "refresh_token":
+        p = _decode_token(params.get("refresh_token", ""), "r")
+        if p is None or ("client_id" in params and params["client_id"] != p["c"]):
+            return _response(400, {"error": "invalid_grant"})
+        return _token_response(p["c"])
+    return _response(400, {"error": "unsupported_grant_type"})
 
 
 # ---------------------------------------------------------------------------
@@ -370,7 +399,11 @@ def handler(event: dict, context) -> dict:
     host = headers_raw.get("host", "")
     base_url = f"https://{host}"
 
-    logger.info("REQ %s %s body=%s", http_method, path, (event.get("body") or "")[:500])
+    if path == "/token":
+        # Never log /token bodies: they carry auth codes, PKCE verifiers and refresh tokens
+        logger.info("REQ %s %s grant_type=%s", http_method, path, _grant_type(event))
+    else:
+        logger.info("REQ %s %s body=%s", http_method, path, (event.get("body") or "")[:500])
 
     # OAuth 2.0 endpoints (no Bearer required)
     if _OAUTH_SECRET_NAME:
@@ -407,6 +440,12 @@ def handler(event: dict, context) -> dict:
         return _response(500, {"error": str(exc)})
 
     return _response(200, result)
+
+
+def _grant_type(event: dict) -> str:
+    body = event.get("body") or ""
+    m = re.search(r"(?:^|&)grant_type=([A-Za-z_]+)", body) or re.search(r'"grant_type"\s*:\s*"([A-Za-z_]+)"', body)
+    return m.group(1) if m else "?"
 
 
 def _response(status: int, body: dict) -> dict:

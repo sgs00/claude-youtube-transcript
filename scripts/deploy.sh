@@ -20,7 +20,8 @@ set -o allexport; source "$REPO_ROOT/.env"; set +o allexport
 REGION="${AWS_DEFAULT_REGION:-eu-south-1}"
 FUNCTION_NAME="${FUNCTION_NAME:?FUNCTION_NAME not set in .env}"
 LAMBDA_MEMORY="${LAMBDA_MEMORY:-256}"
-TOKEN_TTL_DAYS="${TOKEN_TTL_DAYS:-30}"
+ACCESS_TOKEN_TTL_HOURS="${ACCESS_TOKEN_TTL_HOURS:-720}"
+REFRESH_TOKEN_TTL_DAYS="${REFRESH_TOKEN_TTL_DAYS:-365}"
 DEPLOY_BUCKET="${DEPLOY_BUCKET:-${FUNCTION_NAME}-deploy-$(aws sts get-caller-identity --query Account --output text)}"
 SECRET_NAME="${FUNCTION_NAME}-oauth-secret"
 WEBSHARE_SECRET_NAME="${FUNCTION_NAME}-webshare"
@@ -65,7 +66,7 @@ echo "==> Updating configuration (memory: ${LAMBDA_MEMORY}MB)"
 aws lambda update-function-configuration \
   --function-name "$FUNCTION_NAME" \
   --memory-size "$LAMBDA_MEMORY" \
-  --environment "Variables={WEBSHARE_SECRET_NAME=$WEBSHARE_SECRET_ENV,OAUTH_SECRET_NAME=$SECRET_NAME,TOKEN_TTL_DAYS=$TOKEN_TTL_DAYS}" \
+  --environment "Variables={WEBSHARE_SECRET_NAME=$WEBSHARE_SECRET_ENV,OAUTH_SECRET_NAME=$SECRET_NAME,ACCESS_TOKEN_TTL_HOURS=$ACCESS_TOKEN_TTL_HOURS,REFRESH_TOKEN_TTL_DAYS=$REFRESH_TOKEN_TTL_DAYS}" \
   --region "$REGION" \
   --output text --query 'LastModified' | xargs echo "    updated:"
 
