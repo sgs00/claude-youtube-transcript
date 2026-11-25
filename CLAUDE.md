@@ -52,7 +52,7 @@ Deployed as a Lambda Function URL (no API Gateway). Auth is OAuth2 Authorization
 | `WEBSHARE_SECRET_NAME` | Secrets Manager secret with Webshare **Residential** proxy credentials, JSON `{"username","password"}`. Effectively required on AWS: YouTube blocks cloud IPs | auto-set by scripts (`<FUNCTION_NAME>-webshare`); empty = proxy disabled |
 | `OAUTH_SECRET_NAME` | Secrets Manager secret name for OAuth signing key | auto-set by scripts |
 | `LAMBDA_MEMORY` | Lambda memory in MB | `256` |
-| `ACCESS_TOKEN_TTL_HOURS` | Access token TTL in hours (also returned as `expires_in`) | `720` |
+| `ACCESS_TOKEN_TTL_HOURS` | Access token TTL in hours (also returned as `expires_in`) | `4` |
 | `REFRESH_TOKEN_TTL_DAYS` | Refresh token TTL in days; rotated on every `refresh_token` grant | `365` |
 
 `WEBSHARE_USERNAME` / `WEBSHARE_PASSWORD` live in `.env` (keep them there) and are read only by `bootstrap.sh` / `deploy.sh`, which use them to create or update the `<FUNCTION_NAME>-webshare` secret (`sync_webshare_secret` in `scripts/_lib.sh`). They are never passed to Lambda.

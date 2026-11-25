@@ -20,7 +20,7 @@ set -o allexport; source "$REPO_ROOT/.env"; set +o allexport
 REGION="${AWS_DEFAULT_REGION:-eu-south-1}"
 FUNCTION_NAME="${FUNCTION_NAME:?FUNCTION_NAME not set in .env}"
 LAMBDA_MEMORY="${LAMBDA_MEMORY:-256}"
-ACCESS_TOKEN_TTL_HOURS="${ACCESS_TOKEN_TTL_HOURS:-720}"
+ACCESS_TOKEN_TTL_HOURS="${ACCESS_TOKEN_TTL_HOURS:-4}"
 REFRESH_TOKEN_TTL_DAYS="${REFRESH_TOKEN_TTL_DAYS:-365}"
 DEPLOY_BUCKET="${DEPLOY_BUCKET:-${FUNCTION_NAME}-deploy-$(aws sts get-caller-identity --query Account --output text)}"
 SECRET_NAME="${FUNCTION_NAME}-oauth-secret"
