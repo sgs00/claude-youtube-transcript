@@ -6,8 +6,8 @@ import logging
 import os
 import re
 import time
+import urllib.error
 import urllib.parse
-
 import urllib.request
 
 from youtube_transcript_api import YouTubeTranscriptApi
@@ -27,6 +27,16 @@ if not _WEBSHARE_SECRET_NAME:
         "so transcript fetches may fail (RequestBlocked/IpBlocked)"
     )
 _webshare_credentials: tuple[str, str] | None = None
+
+_YOUTUBE_API_KEY_SECRET_NAME = (os.environ.get("YOUTUBE_API_KEY_SECRET_NAME") or "").strip()
+_youtube_api_key: str | None = None
+
+_PLAYLIST_URL_PATTERN = re.compile(
+    r"^https?://((www\.|m\.|music\.)?youtube\.com/(playlist|watch)\?|youtu\.be/[^?]+\?)"
+)
+_PLAYLIST_ID_PATTERN = re.compile(r"[?&]list=([A-Za-z0-9_-]+)")
+_PLAYLIST_DEFAULT_MAX_VIDEOS = 50
+_PLAYLIST_MAX_VIDEOS_LIMIT = 500
 
 _OAUTH_SECRET_NAME = (os.environ.get("OAUTH_SECRET_NAME") or "").strip()
 _ACCESS_TOKEN_TTL_SECONDS = int(os.environ.get("ACCESS_TOKEN_TTL_HOURS") or 4) * 3600
@@ -109,10 +119,109 @@ def _get_transcript(video_id: str) -> list:
 
 
 # ---------------------------------------------------------------------------
+# YouTube playlists (YouTube Data API v3)
+# ---------------------------------------------------------------------------
+
+class PlaylistError(Exception):
+    pass
+
+
+def _extract_playlist_id(url: str) -> str:
+    m = _PLAYLIST_ID_PATTERN.search(url or "") if _PLAYLIST_URL_PATTERN.match(url or "") else None
+    if not m:
+        raise ValueError(
+            f"Not a valid YouTube playlist URL: {url!r} "
+            "(expected youtube.com/playlist?list=... or a watch URL with &list=...)"
+        )
+    return m.group(1)
+
+
+def _load_youtube_api_key() -> str:
+    global _youtube_api_key
+    if not _YOUTUBE_API_KEY_SECRET_NAME:
+        raise PlaylistError("Playlist support is not configured (YOUTUBE_API_KEY_SECRET_NAME not set)")
+    if _youtube_api_key is None:
+        _youtube_api_key = _get_secret_string(_YOUTUBE_API_KEY_SECRET_NAME).strip()
+    if not _youtube_api_key:
+        raise PlaylistError(f"Secret {_YOUTUBE_API_KEY_SECRET_NAME} is empty")
+    return _youtube_api_key
+
+
+def _youtube_api(resource: str, params: dict) -> dict:
+    # The key goes in a header, not the query string, so it never shows up in URLs or errors
+    url = f"https://www.googleapis.com/youtube/v3/{resource}?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, headers={"X-goog-api-key": _load_youtube_api_key()})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        try:
+            message = json.loads(exc.read())["error"]["message"]
+        except Exception:
+            message = exc.reason
+        raise PlaylistError(f"YouTube Data API error {exc.code}: {message}") from None
+
+
+def _get_playlist(playlist_id: str, max_videos: int) -> dict:
+    found = _youtube_api("playlists", {"part": "snippet,contentDetails", "id": playlist_id}).get("items") or []
+    if not found:
+        raise PlaylistError(f"Playlist not found or private: {playlist_id}")
+    info = found[0]
+
+    videos: list[dict] = []
+    unavailable = 0
+    page_token = None
+    truncated = False
+    while True:
+        params = {"part": "snippet,contentDetails", "playlistId": playlist_id, "maxResults": 50}
+        if page_token:
+            params["pageToken"] = page_token
+        page = _youtube_api("playlistItems", params)
+        for item in page.get("items") or []:
+            snippet = item.get("snippet") or {}
+            video_id = (snippet.get("resourceId") or {}).get("videoId")
+            # Private and deleted videos stay in the list without an owner channel
+            if not video_id or not snippet.get("videoOwnerChannelTitle"):
+                unavailable += 1
+                continue
+            if len(videos) == max_videos:
+                truncated = True
+                break
+            videos.append({
+                "position": snippet.get("position", 0) + 1,
+                "title": snippet.get("title"),
+                "channel": snippet.get("videoOwnerChannelTitle"),
+                "url": f"https://www.youtube.com/watch?v={video_id}",
+                "published_at": (item.get("contentDetails") or {}).get("videoPublishedAt"),
+            })
+        page_token = page.get("nextPageToken")
+        if truncated or not page_token:
+            break
+        if len(videos) == max_videos:
+            truncated = True  # more pages exist; not fetched to save quota and time
+            break
+
+    total = (info.get("contentDetails") or {}).get("itemCount")
+    return {
+        "playlist": {
+            "id": playlist_id,
+            "url": f"https://www.youtube.com/playlist?list={playlist_id}",
+            "title": (info.get("snippet") or {}).get("title"),
+            "channel": (info.get("snippet") or {}).get("channelTitle"),
+            "description": (info.get("snippet") or {}).get("description"),
+            "video_count": total,
+        },
+        "videos": videos,
+        "unavailable_skipped": unavailable,
+        "truncated": truncated,
+    }
+
+
+# ---------------------------------------------------------------------------
 # MCP protocol (JSON-RPC 2.0, Streamable HTTP, spec 2025-03-26)
 # ---------------------------------------------------------------------------
 
-_TOOL_SCHEMA = {
+_TRANSCRIPT_TOOL_SCHEMA = {
     "name": "get_youtube_transcript",
     "description": (
         "Fetches the transcript and metadata of a YouTube video. "
@@ -126,6 +235,36 @@ _TOOL_SCHEMA = {
                 "type": "string",
                 "description": "Full YouTube video URL (youtube.com/watch?v=... or youtu.be/...)",
             }
+        },
+        "required": ["url"],
+    },
+}
+
+_PLAYLIST_TOOL_SCHEMA = {
+    "name": "get_youtube_playlist",
+    "description": (
+        "Lists the videos of a public or unlisted YouTube playlist: playlist title, channel and "
+        "description, and for each video its position, title, channel, URL and publish date. "
+        "Does not fetch transcripts: call get_youtube_transcript on the video URLs you need. "
+        "Private and deleted videos are skipped. If 'truncated' is true, more videos exist "
+        "beyond max_videos."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "url": {
+                "type": "string",
+                "description": "YouTube playlist URL (youtube.com/playlist?list=... or a watch URL with &list=...)",
+            },
+            "max_videos": {
+                "type": "integer",
+                "description": (
+                    f"Maximum number of videos to return (default {_PLAYLIST_DEFAULT_MAX_VIDEOS}, "
+                    f"max {_PLAYLIST_MAX_VIDEOS_LIMIT})"
+                ),
+                "minimum": 1,
+                "maximum": _PLAYLIST_MAX_VIDEOS_LIMIT,
+            },
         },
         "required": ["url"],
     },
@@ -152,7 +291,7 @@ def _mcp_tools_list(request: dict) -> dict:
     return {
         "jsonrpc": "2.0",
         "id": request.get("id"),
-        "result": {"tools": [_TOOL_SCHEMA]},
+        "result": {"tools": [_TRANSCRIPT_TOOL_SCHEMA, _PLAYLIST_TOOL_SCHEMA]},
     }
 
 
@@ -161,10 +300,45 @@ def _mcp_tools_call(request: dict) -> dict:
     params = request.get("params", {})
     tool_name = params.get("name")
 
-    if tool_name != "get_youtube_transcript":
-        return _jsonrpc_error(id_, -32601, f"Unknown tool: {tool_name!r}")
+    args = params.get("arguments") or {}
+    if tool_name == "get_youtube_transcript":
+        return _call_get_transcript(id_, args)
+    if tool_name == "get_youtube_playlist":
+        return _call_get_playlist(id_, args)
+    return _jsonrpc_error(id_, -32601, f"Unknown tool: {tool_name!r}")
 
-    args = params.get("arguments", {})
+
+def _tool_result(id_, payload: dict) -> dict:
+    return {
+        "jsonrpc": "2.0",
+        "id": id_,
+        "result": {"content": [{"type": "text", "text": json.dumps(payload)}]},
+    }
+
+
+def _call_get_playlist(id_, args: dict) -> dict:
+    url = args.get("url", "")
+    try:
+        playlist_id = _extract_playlist_id(url)
+        max_videos = args.get("max_videos")
+        max_videos = _PLAYLIST_DEFAULT_MAX_VIDEOS if max_videos is None else int(max_videos)
+        if not 1 <= max_videos <= _PLAYLIST_MAX_VIDEOS_LIMIT:
+            raise ValueError(f"max_videos must be between 1 and {_PLAYLIST_MAX_VIDEOS_LIMIT}")
+    except (ValueError, TypeError) as exc:
+        return _jsonrpc_error(id_, -32602, str(exc))
+
+    try:
+        payload = _get_playlist(playlist_id, max_videos)
+    except PlaylistError as exc:
+        logger.error("Playlist fetch failed: %s", exc)
+        return _jsonrpc_error(id_, -32603, str(exc))
+    except Exception as exc:
+        logger.error("Playlist fetch failed: %s", exc)
+        return _jsonrpc_error(id_, -32603, f"Playlist unavailable: {exc}")
+    return _tool_result(id_, payload)
+
+
+def _call_get_transcript(id_, args: dict) -> dict:
     url = args.get("url", "")
 
     try:
@@ -186,12 +360,7 @@ def _mcp_tools_call(request: dict) -> dict:
         logger.error("Transcript fetch failed: %s", exc)
         return _jsonrpc_error(id_, -32603, f"Transcript unavailable: {exc}")
 
-    payload = {"url": url, "metadata": metadata, "transcript": transcript}
-    return {
-        "jsonrpc": "2.0",
-        "id": id_,
-        "result": {"content": [{"type": "text", "text": json.dumps(payload)}]},
-    }
+    return _tool_result(id_, {"url": url, "metadata": metadata, "transcript": transcript})
 
 
 def _extract_video_id(url: str) -> str:

@@ -25,17 +25,19 @@ LAMBDA_ROLE_NAME="${LAMBDA_ROLE_NAME:?LAMBDA_ROLE_NAME not set in .env}"
 DEPLOY_BUCKET="${DEPLOY_BUCKET:-${FUNCTION_NAME}-deploy-$(aws sts get-caller-identity --query Account --output text)}"
 SECRET_NAME="${FUNCTION_NAME}-oauth-secret"
 WEBSHARE_SECRET_NAME="${FUNCTION_NAME}-webshare"
+YOUTUBE_API_KEY_SECRET_NAME="${FUNCTION_NAME}-youtube-api-key"
 
 cat <<MSG
 This permanently deletes, in $REGION:
   - Lambda function $FUNCTION_NAME and its Function URL
-  - Secrets: $SECRET_NAME (OAuth signing key), $WEBSHARE_SECRET_NAME
+  - Secrets: $SECRET_NAME (OAuth signing key), $WEBSHARE_SECRET_NAME,
+             $YOUTUBE_API_KEY_SECRET_NAME
   - IAM role $LAMBDA_ROLE_NAME and S3 bucket $DEPLOY_BUCKET
 
 The Claude connector will STOP working. After running bootstrap.sh again, the
 Function URL and the OAuth signing key are new: in Claude, remove the connector
 and add it again with the new URL (Settings -> Connectors).
-The Webshare credentials are kept in .env and re-synced by bootstrap.sh.
+The Webshare credentials and the YouTube API key are kept in .env and re-synced by bootstrap.sh.
 
 MSG
 if [ "${1:-}" != "--yes" ]; then
@@ -80,7 +82,7 @@ else
 fi
 
 # Force-delete (no recovery window) so a later bootstrap.sh can recreate the same names
-for secret in "$SECRET_NAME" "$WEBSHARE_SECRET_NAME"; do
+for secret in "$SECRET_NAME" "$WEBSHARE_SECRET_NAME" "$YOUTUBE_API_KEY_SECRET_NAME"; do
   echo "==> Deleting secret: $secret"
   if aws secretsmanager describe-secret --secret-id "$secret" --region "$REGION" &>/dev/null; then
     aws secretsmanager delete-secret --secret-id "$secret" \
@@ -93,7 +95,7 @@ done
 
 # Inline policies must be removed before the role can be deleted
 echo "==> Removing inline IAM policies"
-for policy in SecretsManagerOAuthSecret SecretsManagerWebshareSecret; do
+for policy in SecretsManagerOAuthSecret SecretsManagerWebshareSecret SecretsManagerYouTubeApiKeySecret; do
   if aws iam get-role-policy --role-name "$LAMBDA_ROLE_NAME" --policy-name "$policy" &>/dev/null; then
     aws iam delete-role-policy --role-name "$LAMBDA_ROLE_NAME" --policy-name "$policy"
     echo "    removed: $policy"

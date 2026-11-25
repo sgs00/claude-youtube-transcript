@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Update Lambda code, environment variables and the Webshare proxy secret.
+# Update Lambda code, environment variables and the secrets synced from .env.
 # Requires the function to already exist (run bootstrap.sh first).
 #
 # Prerequisites: aws CLI, zip, uv (run 'uv sync' first)
@@ -25,12 +25,13 @@ REFRESH_TOKEN_TTL_DAYS="${REFRESH_TOKEN_TTL_DAYS:-30}"
 DEPLOY_BUCKET="${DEPLOY_BUCKET:-${FUNCTION_NAME}-deploy-$(aws sts get-caller-identity --query Account --output text)}"
 SECRET_NAME="${FUNCTION_NAME}-oauth-secret"
 WEBSHARE_SECRET_NAME="${FUNCTION_NAME}-webshare"
+YOUTUBE_API_KEY_SECRET_NAME="${FUNCTION_NAME}-youtube-api-key"
 
 # shellcheck source=scripts/_lib.sh
 source "$SCRIPT_DIR/_lib.sh"
 
 # ---------------------------------------------------------------------------
-# Webshare proxy secret (from WEBSHARE_* in .env) + IAM policy
+# Webshare proxy and YouTube API key secrets (from .env) + IAM policies
 # ---------------------------------------------------------------------------
 sync_webshare_secret
 ROLE_NAME=$(aws lambda get-function-configuration --function-name "$FUNCTION_NAME" \
@@ -38,6 +39,11 @@ ROLE_NAME=$(aws lambda get-function-configuration --function-name "$FUNCTION_NAM
 grant_webshare_secret_access "$ROLE_NAME"
 WEBSHARE_SECRET_ENV=""
 [ -n "$WEBSHARE_SECRET_ARN" ] && WEBSHARE_SECRET_ENV="$WEBSHARE_SECRET_NAME"
+
+sync_youtube_api_key_secret
+grant_youtube_api_key_secret_access "$ROLE_NAME"
+YOUTUBE_API_KEY_SECRET_ENV=""
+[ -n "$YOUTUBE_API_KEY_SECRET_ARN" ] && YOUTUBE_API_KEY_SECRET_ENV="$YOUTUBE_API_KEY_SECRET_NAME"
 
 # ---------------------------------------------------------------------------
 # Build + upload code
@@ -66,7 +72,7 @@ echo "==> Updating configuration (memory: ${LAMBDA_MEMORY}MB)"
 aws lambda update-function-configuration \
   --function-name "$FUNCTION_NAME" \
   --memory-size "$LAMBDA_MEMORY" \
-  --environment "Variables={WEBSHARE_SECRET_NAME=$WEBSHARE_SECRET_ENV,OAUTH_SECRET_NAME=$SECRET_NAME,ACCESS_TOKEN_TTL_HOURS=$ACCESS_TOKEN_TTL_HOURS,REFRESH_TOKEN_TTL_DAYS=$REFRESH_TOKEN_TTL_DAYS}" \
+  --environment "Variables={WEBSHARE_SECRET_NAME=$WEBSHARE_SECRET_ENV,YOUTUBE_API_KEY_SECRET_NAME=$YOUTUBE_API_KEY_SECRET_ENV,OAUTH_SECRET_NAME=$SECRET_NAME,ACCESS_TOKEN_TTL_HOURS=$ACCESS_TOKEN_TTL_HOURS,REFRESH_TOKEN_TTL_DAYS=$REFRESH_TOKEN_TTL_DAYS}" \
   --region "$REGION" \
   --output text --query 'LastModified' | xargs echo "    updated:"
 

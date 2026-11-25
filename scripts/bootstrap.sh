@@ -31,6 +31,7 @@ ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 DEPLOY_BUCKET="${DEPLOY_BUCKET:-${FUNCTION_NAME}-deploy-${ACCOUNT_ID}}"
 SECRET_NAME="${FUNCTION_NAME}-oauth-secret"
 WEBSHARE_SECRET_NAME="${FUNCTION_NAME}-webshare"
+YOUTUBE_API_KEY_SECRET_NAME="${FUNCTION_NAME}-youtube-api-key"
 TRUST_POLICY='{
   "Version": "2012-10-17",
   "Statement": [{
@@ -123,6 +124,11 @@ grant_webshare_secret_access "$LAMBDA_ROLE_NAME"
 WEBSHARE_SECRET_ENV=""
 [ -n "$WEBSHARE_SECRET_ARN" ] && WEBSHARE_SECRET_ENV="$WEBSHARE_SECRET_NAME"
 
+sync_youtube_api_key_secret
+grant_youtube_api_key_secret_access "$LAMBDA_ROLE_NAME"
+YOUTUBE_API_KEY_SECRET_ENV=""
+[ -n "$YOUTUBE_API_KEY_SECRET_ARN" ] && YOUTUBE_API_KEY_SECRET_ENV="$YOUTUBE_API_KEY_SECRET_NAME"
+
 # ---------------------------------------------------------------------------
 # 6. Build zip + create Lambda function
 # ---------------------------------------------------------------------------
@@ -149,7 +155,7 @@ else
     --s3-key "$S3_KEY" \
     --timeout 60 \
     --memory-size "$LAMBDA_MEMORY" \
-    --environment "Variables={WEBSHARE_SECRET_NAME=$WEBSHARE_SECRET_ENV,OAUTH_SECRET_NAME=$SECRET_NAME,ACCESS_TOKEN_TTL_HOURS=$ACCESS_TOKEN_TTL_HOURS,REFRESH_TOKEN_TTL_DAYS=$REFRESH_TOKEN_TTL_DAYS}" \
+    --environment "Variables={WEBSHARE_SECRET_NAME=$WEBSHARE_SECRET_ENV,YOUTUBE_API_KEY_SECRET_NAME=$YOUTUBE_API_KEY_SECRET_ENV,OAUTH_SECRET_NAME=$SECRET_NAME,ACCESS_TOKEN_TTL_HOURS=$ACCESS_TOKEN_TTL_HOURS,REFRESH_TOKEN_TTL_DAYS=$REFRESH_TOKEN_TTL_DAYS}" \
     --region "$REGION" \
     --output text --query 'FunctionArn' | xargs echo "    created:"
   echo "    waiting for function to become Active..."
